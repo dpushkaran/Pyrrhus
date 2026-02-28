@@ -19,7 +19,7 @@ class Tier(str, Enum):
 
 
 TIER_MODELS = {
-    Tier.FAST: "gemini-2.0-flash",
+    Tier.FAST: "gemini-2.5-flash-lite",
     Tier.DEEP: "gemini-2.5-pro",
     Tier.VERIFY: "gemini-2.5-flash",
 }
@@ -142,6 +142,50 @@ class EfficiencyStats(BaseModel):
 
 
 class TaskGraphSummary(BaseModel):
+# Executor output models
+# ---------------------------------------------------------------------------
+
+
+class SubTaskResult(BaseModel):
+    subtask_id: int
+    description: str
+    tier: Tier
+    model: str
+    tokens_budgeted: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_dollars: float
+    surplus: int
+    output: str
+    skipped: bool = False
+
+
+class CostReport(BaseModel):
+    # Budget summary
+    budget_dollars: float
+    spent_dollars: float
+    remaining_dollars: float
+    utilization_pct: float
+
+    # Per-subtask breakdown
+    subtask_results: list[SubTaskResult]
+
+    # Tier distribution
+    tier_counts: dict[str, int]
+    subtasks_skipped: int
+    subtasks_downgraded: int
+
+    # Downgrade report
+    downgrades_applied: list[str]
+
+    # Efficiency
+    total_tokens_budgeted: int
+    total_tokens_consumed: int
+    total_surplus: int
+    token_efficiency_pct: float
+
+    # Task graph summary
     total_subtasks: int
     max_depth: int
     parallelizable_subtasks: int
@@ -155,3 +199,6 @@ class CostReport(BaseModel):
     downgrade_report: Optional[DowngradeReport] = None
     efficiency_stats: EfficiencyStats
     task_graph_summary: TaskGraphSummary
+class ExecutorResult(BaseModel):
+    deliverable: str
+    report: CostReport
