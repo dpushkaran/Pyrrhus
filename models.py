@@ -93,6 +93,55 @@ class ExecutionPlan(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Output metric models (populated after a run completes)
+# ---------------------------------------------------------------------------
+
+
+class BudgetSummary(BaseModel):
+    dollar_budget: float
+    dollar_spent: float
+    dollar_remaining: float
+    budget_utilization: float
+
+
+class SubtaskMetrics(BaseModel):
+    subtask_id: int
+    name: str
+    tier: Tier
+    tokens_budgeted: int
+    tokens_consumed: int
+    cost_dollars: float
+    surplus_returned: int
+
+
+class TierDistribution(BaseModel):
+    tier: Tier
+    count: int
+    percentage: float
+
+
+class DowngradeEntry(BaseModel):
+    subtask_id: int
+    name: str
+    original_tier: Tier
+    final_tier: Tier
+
+
+class DowngradeReport(BaseModel):
+    original_plan_cost: float
+    final_plan_cost: float
+    downgrades: list[DowngradeEntry] = []
+    subtasks_skipped: list[str] = []
+
+
+class EfficiencyStats(BaseModel):
+    total_tokens_budgeted: int
+    total_tokens_consumed: int
+    total_surplus_generated: int
+    token_efficiency: float
+
+
+class TaskGraphSummary(BaseModel):
 # Executor output models
 # ---------------------------------------------------------------------------
 
@@ -143,6 +192,13 @@ class CostReport(BaseModel):
     complexity_distribution: dict[str, int]
 
 
+class CostReport(BaseModel):
+    budget_summary: BudgetSummary
+    subtask_metrics: list[SubtaskMetrics]
+    tier_distribution: list[TierDistribution]
+    downgrade_report: Optional[DowngradeReport] = None
+    efficiency_stats: EfficiencyStats
+    task_graph_summary: TaskGraphSummary
 class ExecutorResult(BaseModel):
     deliverable: str
     report: CostReport
