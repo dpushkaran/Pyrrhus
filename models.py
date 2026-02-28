@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Complexity(str, Enum):
@@ -119,6 +121,7 @@ class SubTaskResult(BaseModel):
     surplus: int
     output: str
     skipped: bool = False
+    prompt: str = ""
 
 
 class CostReport(BaseModel):
@@ -149,3 +152,69 @@ class CostReport(BaseModel):
 class ExecutorResult(BaseModel):
     deliverable: str
     report: CostReport
+
+
+# ---------------------------------------------------------------------------
+# Trace & analysis models
+# ---------------------------------------------------------------------------
+
+
+class QualityScore(BaseModel):
+    relevance: float = Field(..., ge=0, le=10)
+    completeness: float = Field(..., ge=0, le=10)
+    coherence: float = Field(..., ge=0, le=10)
+    conciseness: float = Field(..., ge=0, le=10)
+    overall: float = Field(..., ge=0, le=10)
+    rationale: str = ""
+
+
+class TextMetrics(BaseModel):
+    word_count: int = 0
+    type_token_ratio: float = 0.0
+    compression_ratio: float = 0.0
+    ngram_repetition_rate: float = 0.0
+    avg_sentence_length: float = 0.0
+    filler_phrase_count: int = 0
+
+
+class SubTaskTrace(BaseModel):
+    subtask_id: int
+    description: str
+    tier: Tier
+    model: str
+    max_tokens: int
+    prompt: str
+    output: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_dollars: float = 0.0
+    surplus: int = 0
+    skipped: bool = False
+    quality: Optional[QualityScore] = None
+    text_metrics: Optional[TextMetrics] = None
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class PlannerTrace(BaseModel):
+    task: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_dollars: float = 0.0
+    graph_json: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class RunTrace(BaseModel):
+    run_id: str = Field(default_factory=lambda: str(uuid4()))
+    task: str
+    budget_dollars: float
+    planner_trace: PlannerTrace
+    subtask_traces: list[SubTaskTrace] = []
+    deliverable: str = ""
+    deliverable_quality: Optional[QualityScore] = None
+    total_cost_dollars: float = 0.0
+    evaluation_cost_dollars: float = 0.0
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

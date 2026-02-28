@@ -233,6 +233,7 @@ class ExecutorAgent:
                     cost_dollars=cost,
                     surplus=surplus,
                     output=output_text,
+                    prompt=prompt,
                 )
             )
 

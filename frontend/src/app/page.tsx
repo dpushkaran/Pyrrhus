@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5001";
 
 export default function Home() {
   const router = useRouter();
@@ -40,6 +41,12 @@ export default function Home() {
           <span className="text-xs font-semibold tracking-[.14em] uppercase text-muted-foreground">
             Pyrrhus
           </span>
+          <Link
+            href="/traces"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Trace History
+          </Link>
         </div>
       </div>
 
