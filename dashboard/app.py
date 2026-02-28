@@ -13,8 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from agents.allocator import AllocatorAgent
+from agents.evaluator import EvaluatorAgent
 from agents.executor import ExecutorAgent
 from agents.planner import PlannerAgent
+from analysis.text_metrics import compute_text_metrics
+from analysis.trace_store import load_traces, save_trace
+from batch_runner import run_batch
 from models import (
     COMPLEXITY_TO_TIER,
     TIER_PRICING_PER_1M_INPUT,
@@ -23,6 +27,9 @@ from models import (
     ExecutionPlan,
     ExecutorResult,
     PlannerResult,
+    PlannerTrace,
+    RunTrace,
+    SubTaskTrace,
     TaskGraph,
     Tier,
 )
@@ -248,6 +255,54 @@ def run():
         planner_cost_dollars=planner_cost,
     )
 
+    # Step 4 — Trace (background, best-effort)
+    try:
+        evaluator = EvaluatorAgent(api_key=api_key)
+        planner_trace = PlannerTrace(
+            task=task, model=planner_result.model,
+            prompt_tokens=planner_result.usage.prompt_tokens,
+            completion_tokens=planner_result.usage.completion_tokens,
+            total_tokens=planner_result.usage.total_tokens,
+            cost_dollars=planner_cost,
+            graph_json=planner_result.graph.model_dump_json(),
+        )
+        subtask_traces = []
+        for sr in result.report.subtask_results:
+            quality = None
+            if not sr.skipped and sr.output:
+                try:
+                    quality = evaluator.evaluate_subtask(sr.description, sr.output, task)
+                except Exception:
+                    pass
+            text_metrics = compute_text_metrics(sr.output) if sr.output else None
+            subtask_traces.append(SubTaskTrace(
+                subtask_id=sr.subtask_id, description=sr.description,
+                tier=sr.tier, model=sr.model, max_tokens=sr.tokens_budgeted,
+                prompt=sr.prompt, output=sr.output,
+                prompt_tokens=sr.prompt_tokens,
+                completion_tokens=sr.completion_tokens,
+                total_tokens=sr.total_tokens,
+                cost_dollars=sr.cost_dollars, surplus=sr.surplus,
+                skipped=sr.skipped, quality=quality, text_metrics=text_metrics,
+            ))
+        deliverable_quality = None
+        if result.deliverable:
+            try:
+                deliverable_quality = evaluator.evaluate_deliverable(task, result.deliverable)
+            except Exception:
+                pass
+        trace = RunTrace(
+            task=task, budget_dollars=budget,
+            planner_trace=planner_trace, subtask_traces=subtask_traces,
+            deliverable=result.deliverable,
+            deliverable_quality=deliverable_quality,
+            total_cost_dollars=result.report.spent_dollars,
+            evaluation_cost_dollars=evaluator.total_cost_dollars,
+        )
+        save_trace(trace)
+    except Exception:
+        pass
+
     frontend_json = _to_frontend_json(task, budget, planner_result, plan, result)
     latest_report = frontend_json
     return jsonify(frontend_json)
@@ -258,6 +313,65 @@ def api_report():
     if latest_report is None:
         return jsonify({"error": "No report available. Run a task first."}), 404
     return jsonify(latest_report)
+
+
+@app.route("/api/batch", methods=["POST"])
+def batch():
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return jsonify({"error": "GOOGLE_API_KEY not configured"}), 500
+
+    data = request.get_json(silent=True) or {}
+    task = data.get("task", "").strip()
+    budgets = data.get("budgets", [0.01, 0.02, 0.04, 0.08, 0.16])
+    concurrency = int(data.get("concurrency", 3))
+
+    if not task:
+        return jsonify({"error": "task is required"}), 400
+    if not budgets or not isinstance(budgets, list):
+        return jsonify({"error": "budgets must be a non-empty list"}), 400
+
+    traces = run_batch(
+        api_key=api_key,
+        task=task,
+        budgets=[float(b) for b in budgets],
+        max_concurrency=concurrency,
+        evaluate=True,
+    )
+
+    rows = []
+    for tr in traces:
+        dm = compute_text_metrics(tr.deliverable) if tr.deliverable else None
+        rows.append({
+            "run_id": tr.run_id,
+            "budget": tr.budget_dollars,
+            "spent": tr.total_cost_dollars,
+            "quality": tr.deliverable_quality.overall if tr.deliverable_quality else None,
+            "quality_scores": tr.deliverable_quality.model_dump() if tr.deliverable_quality else None,
+            "text_metrics": dm.model_dump() if dm else None,
+            "evaluation_cost": tr.evaluation_cost_dollars,
+            "subtask_count": len(tr.subtask_traces),
+            "skipped_count": sum(1 for s in tr.subtask_traces if s.skipped),
+        })
+
+    return jsonify({"task": task, "runs": rows})
+
+
+@app.route("/api/traces")
+def api_traces():
+    traces = load_traces()
+    summaries = []
+    for tr in traces:
+        summaries.append({
+            "run_id": tr.run_id,
+            "task": tr.task,
+            "budget": tr.budget_dollars,
+            "spent": tr.total_cost_dollars,
+            "quality": tr.deliverable_quality.overall if tr.deliverable_quality else None,
+            "subtask_count": len(tr.subtask_traces),
+            "timestamp": tr.timestamp,
+        })
+    return jsonify(summaries)
 
 
 if __name__ == "__main__":
