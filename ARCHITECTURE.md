@@ -57,10 +57,12 @@ An orchestration layer that decomposes tasks into a dependency graph, routes eac
 │  - Computes surplus (budgeted − actual) and adds it     │
 │    back to the remaining token pool                     │
 │  - Collects all outputs and assembles final deliverable │
+│  - Builds output metrics and cost report                │
 │                                                         │
 │  Tools available to Executor:                           │
 │    @tool track_usage       — log actual tokens per call │
 │    @tool reallocate_surplus — return surplus to pool    │
+│    @tool build_report      — assemble metrics + output  │
 └──────┬──────────────┬───────────────┬───────────────────┘
        │              │               │
        ▼              ▼               ▼
@@ -90,7 +92,7 @@ An orchestration layer that decomposes tasks into a dependency graph, routes eac
 
 ## Tier System
 
-Each subtask is assigned to exactly one tier. Tier selection determines both the model used and the token cap for that call.Cr
+Each subtask is assigned to exactly one tier. Tier selection determines both the model used and the token cap for that call.
 
 ### Tier Definitions
 
@@ -216,20 +218,121 @@ The Executor walks the DAG, dispatching subtasks to tier agents:
 
 ### Step 5 — Assembly and Output
 
-The Executor collects the final deliverable (Subtask 5 output) and packages it with a cost report:
+The Executor collects the final deliverable (Subtask 5 output) and packages it with the full output metrics (see **Output Metrics** below). The user sees the deliverable alongside budget summary, per-subtask breakdown, tier distribution, downgrade report (if applicable), and efficiency stats:
 
 ```
 Budget:  $0.08
 Spent:   $0.06
-
-Breakdown:
-  Subtask 1 (Research)    → Fast    → $0.004
-  Subtask 2 (Summarize)   → Fast    → $0.008
-  Subtask 3 (Trends)      → Deep    → $0.018
-  Subtask 4 (Write)       → Deep    → $0.024
-  Subtask 5 (Review)      → Verify  → $0.006
-
 Remaining: $0.02 (returned to user)
+Utilization: 75%
+
+Subtask Breakdown:
+  #  Name         Tier     Budgeted  Consumed  Cost     Surplus
+  1  Research     Fast     500       400       $0.004   +100
+  2  Summarize    Fast     1,000     900       $0.008   +100
+  3  Trends       Deep     2,000     1,800     $0.018   +200
+  4  Write        Deep     3,000     2,600     $0.024   +400
+  5  Review       Verify   1,000     800       $0.006   +200
+
+Tier Distribution:
+  Fast: 2 subtasks (40%)  |  Deep: 2 subtasks (40%)  |  Verify: 1 subtask (20%)
+
+Downgrades: none
+Subtasks Skipped: none
+
+Efficiency:
+  Tokens budgeted: 7,500  |  Tokens consumed: 6,500  |  Efficiency: 86.7%
+  Total surplus generated: 1,000 tokens
+
+Task Graph:
+  Total subtasks: 5  |  Max depth: 4  |  Parallelizable: 0
+  Complexity: 2 Low, 2 High, 1 Medium
+```
+
+---
+
+## Output Metrics
+
+Every completed run returns the deliverable alongside a structured metrics report. Metrics are grouped into six categories, ordered from highest to lowest priority.
+
+### 1. Budget Summary
+
+The headline numbers. Always shown.
+
+| Metric | Source | Example |
+|---|---|---|
+| Dollar budget | User input | $0.08 |
+| Dollar spent | Sum of per-subtask costs | $0.06 |
+| Dollar remaining | Budget - spent | $0.02 |
+| Budget utilization | Spent / budget | 75% |
+
+### 2. Per-Subtask Breakdown
+
+One row per subtask. Each row is populated by `track_usage` after the subtask completes.
+
+| Field | Description |
+|---|---|
+| Subtask name | Short label from the Planner (e.g. "Research", "Write") |
+| Assigned tier | Fast / Deep / Verify |
+| Tokens budgeted | Token cap assigned by the Allocator |
+| Tokens consumed | Actual tokens reported by the Gemini API response |
+| Subtask cost | Dollar cost computed from consumed tokens at the tier's pricing rate |
+| Surplus returned | Budgeted - consumed, added back to pool via `reallocate_surplus` |
+
+### 3. Tier Distribution
+
+Aggregated from the Allocator's execution plan. Shows the quality profile of the run.
+
+| Metric | Description |
+|---|---|
+| Subtasks per tier | Count and percentage routed to Fast / Deep / Verify |
+| Subtasks skipped | Count of subtasks dropped entirely due to budget pressure |
+| Subtasks downgraded | Count of subtasks assigned a lower tier than their complexity default |
+
+A budget-constrained run shows more subtasks pushed to Fast and skipped verification steps — the user immediately sees the quality tradeoff their budget imposed.
+
+### 4. Downgrade Report
+
+Shown only when the Allocator applied budget-driven downgrades. Makes the cost-vs-quality tradeoff explicit.
+
+| Metric | Description |
+|---|---|
+| Original plan cost | Estimated dollar cost before any downgrades |
+| Final plan cost | Estimated dollar cost after downgrades |
+| Downgrades applied | List of subtasks with their original tier and final tier |
+| Subtasks skipped | List of subtasks dropped entirely |
+
+### 5. Efficiency Stats
+
+Derived from token tracking across all subtasks.
+
+| Metric | Description |
+|---|---|
+| Total tokens budgeted | Sum of all per-subtask token caps |
+| Total tokens consumed | Sum of all actual tokens used |
+| Total surplus generated | Budgeted - consumed across all subtasks |
+| Token efficiency | Consumed / budgeted as a percentage |
+
+### 6. Task Graph Summary
+
+From the Planner's output. Gives the user a sense of how the system decomposed their request.
+
+| Metric | Description |
+|---|---|
+| Total subtasks | Number of subtasks in the DAG |
+| Max dependency depth | Longest path through the DAG |
+| Parallelizable subtasks | Subtasks with no shared dependencies that could run concurrently |
+| Complexity distribution | Count of Low / Medium / High subtasks |
+
+### Where Each Metric Comes From
+
+```
+User Input ──────────────────────► Budget Summary (dollar budget)
+Planner ─────────────────────────► Task Graph Summary (subtask count, depth, complexity)
+Allocator ───────────────────────► Tier Distribution, Downgrade Report
+Executor (track_usage) ──────────► Per-Subtask Breakdown, Efficiency Stats
+Executor (reallocate_surplus) ───► Surplus fields in Per-Subtask Breakdown
+Executor (build_report) ─────────► Final assembled CostReport with all metrics
 ```
 
 ---
@@ -247,6 +350,7 @@ Each component maps directly to CAL primitives:
 | Fast / Deep / Verify | `CAL.Agent` instances, each decorated with `@subagent`                                   |
 | `track_usage`        | `@tool` — logs actual tokens consumed per subtask                                        |
 | `reallocate_surplus` | `@tool` — computes surplus and adds it back to pool                                      |
+| `build_report`       | `@tool` — assembles CostReport with all six metric categories                            |
 | Context passing      | `FullCompressionMemory` — passes relevant prior outputs without exceeding token caps     |
 
 
@@ -301,9 +405,12 @@ Each component maps directly to CAL primitives:
 │
 ├── tools/
 │   ├── track_usage.py        # @tool — logs actual tokens consumed per subtask
-│   └── reallocate_surplus.py # @tool — returns surplus tokens to pool
+│   ├── reallocate_surplus.py # @tool — returns surplus tokens to pool
+│   └── build_report.py       # @tool — assembles CostReport with all metric categories
 │
-├── models.py                 # Pydantic schemas: SubTask, TaskGraph, ExecutionPlan, CostReport
+├── models.py                 # Pydantic schemas: SubTask, TaskGraph, ExecutionPlan,
+│                              #   CostReport, SubtaskMetrics, TierDistribution,
+│                              #   DowngradeReport, EfficiencyStats, TaskGraphSummary
 ├── budget.py                 # Token budget pool: conversion, per-subtask caps, surplus tracking
 ├── memory.py                 # FullCompressionMemory config and helpers
 ├── main.py                   # Entry point: accept task + budget, run pipeline, print report
