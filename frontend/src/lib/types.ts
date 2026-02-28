@@ -5,6 +5,24 @@ export interface BudgetSummary {
   budget_utilization: number;
 }
 
+export interface QualityScore {
+  relevance: number;
+  completeness: number;
+  coherence: number;
+  conciseness: number;
+  overall: number;
+  rationale: string;
+}
+
+export interface TextMetrics {
+  word_count: number;
+  type_token_ratio: number;
+  compression_ratio: number;
+  ngram_repetition_rate: number;
+  avg_sentence_length: number;
+  filler_phrase_count: number;
+}
+
 export interface SubtaskMetrics {
   subtask_id: number;
   name: string;
@@ -15,6 +33,8 @@ export interface SubtaskMetrics {
   tokens_consumed: number;
   cost_dollars: number;
   surplus_returned: number;
+  quality?: QualityScore;
+  text_metrics?: TextMetrics;
 }
 
 export interface TierDistribution {
@@ -85,6 +105,16 @@ export interface SavingsReport {
   explanation: string;
 }
 
+export interface TraceEntry {
+  run_id: string;
+  task: string;
+  budget: number;
+  spent: number;
+  quality: number | null;
+  subtask_count: number;
+  timestamp: string;
+}
+
 export interface CostReport {
   budget_summary: BudgetSummary;
   subtask_metrics: SubtaskMetrics[];
@@ -97,4 +127,7 @@ export interface CostReport {
   task_input?: string;
   budget_input?: number;
   deliverable?: string;
+  deliverable_quality?: QualityScore;
+  deliverable_text_metrics?: TextMetrics;
+  evaluation_cost?: number;
 }

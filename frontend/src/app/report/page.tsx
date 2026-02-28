@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -113,12 +114,29 @@ export default function ReportPage() {
       {/* Top bar */}
       <div className="border-b">
         <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
-          <span className="text-xs font-semibold tracking-[.14em] uppercase text-muted-foreground">
-            Pyrrhus &mdash; Orchestration Report
-          </span>
-          <span className="text-xs font-mono text-muted-foreground">
-            {new Date().toISOString().slice(0, 16).replace("T", " ")} UTC
-          </span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="text-xs font-semibold tracking-[.14em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Pyrrhus
+            </Link>
+            <span className="text-xs text-muted-foreground">/</span>
+            <span className="text-xs font-semibold tracking-[.14em] uppercase text-muted-foreground">
+              Report
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/traces"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Traces
+            </Link>
+            <span className="text-xs font-mono text-muted-foreground">
+              {new Date().toISOString().slice(0, 16).replace("T", " ")} UTC
+            </span>
+          </div>
         </div>
       </div>
 
@@ -192,6 +210,102 @@ export default function ReportPage() {
             </Card>
           </div>
         </section>
+
+        {/* Quality & Text Analysis */}
+        {(report.deliverable_quality || report.deliverable_text_metrics) && (
+          <section>
+            <SectionHeading>Quality &amp; Text Analysis</SectionHeading>
+            <div className="grid md:grid-cols-2 gap-6">
+              {report.deliverable_quality && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                      LLM-as-Judge Quality Score
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-baseline gap-3 mb-4">
+                      <span className="text-4xl font-bold font-mono tracking-tight">
+                        {report.deliverable_quality.overall.toFixed(1)}
+                      </span>
+                      <span className="text-sm text-muted-foreground">/10</span>
+                    </div>
+                    <div className="space-y-2">
+                      {(
+                        [
+                          ["Relevance", report.deliverable_quality.relevance],
+                          ["Completeness", report.deliverable_quality.completeness],
+                          ["Coherence", report.deliverable_quality.coherence],
+                          ["Conciseness", report.deliverable_quality.conciseness],
+                        ] as [string, number][]
+                      ).map(([label, val]) => (
+                        <div key={label} className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">{label}</span>
+                            <span className="text-xs font-mono font-semibold">{val.toFixed(1)}</span>
+                          </div>
+                          <Progress value={val * 10} className="h-1" />
+                        </div>
+                      ))}
+                    </div>
+                    {report.deliverable_quality.rationale && (
+                      <p className="text-xs text-muted-foreground mt-3 italic">
+                        &ldquo;{report.deliverable_quality.rationale}&rdquo;
+                      </p>
+                    )}
+                    {report.evaluation_cost != null && report.evaluation_cost > 0 && (
+                      <p className="text-[10px] text-muted-foreground mt-2 font-mono">
+                        Evaluation cost: ${report.evaluation_cost.toFixed(6)}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+              {report.deliverable_text_metrics && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                      Deliverable Text Metrics
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="space-y-3">
+                      {(
+                        [
+                          ["Word Count", num(report.deliverable_text_metrics.word_count)],
+                          ["Type-Token Ratio", report.deliverable_text_metrics.type_token_ratio.toFixed(3)],
+                          ["Compression Ratio", report.deliverable_text_metrics.compression_ratio.toFixed(3)],
+                          ["N-gram Repetition", pct(report.deliverable_text_metrics.ngram_repetition_rate * 100)],
+                          ["Avg Sentence Length", `${report.deliverable_text_metrics.avg_sentence_length.toFixed(1)} words`],
+                          ["Filler Phrases", String(report.deliverable_text_metrics.filler_phrase_count)],
+                        ] as [string, string][]
+                      ).map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0"
+                        >
+                          <dt className="text-sm text-muted-foreground">{label}</dt>
+                          <dd className="text-sm font-semibold font-mono">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="mt-4 space-y-1.5">
+                      <p className="text-[10px] uppercase tracking-[.08em] text-muted-foreground font-semibold">
+                        What These Mean
+                      </p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        <strong>TTR</strong> &mdash; vocabulary diversity (higher = more varied).{" "}
+                        <strong>Compression</strong> &mdash; lower means more redundant content.{" "}
+                        <strong>N-gram repeat</strong> &mdash; fraction of 3-word phrases repeated.{" "}
+                        <strong>Fillers</strong> &mdash; padding phrases like &ldquo;it is important to note.&rdquo;
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* Savings Comparison */}
         {savings && (
@@ -377,6 +491,64 @@ export default function ReportPage() {
                                   {s.description}
                                 </p>
                               </div>
+                              {s.quality && (
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                    Quality Score
+                                  </p>
+                                  <div className="flex gap-3 flex-wrap">
+                                    {(
+                                      [
+                                        ["Overall", s.quality.overall],
+                                        ["Relevance", s.quality.relevance],
+                                        ["Completeness", s.quality.completeness],
+                                        ["Coherence", s.quality.coherence],
+                                        ["Conciseness", s.quality.conciseness],
+                                      ] as [string, number][]
+                                    ).map(([label, val]) => (
+                                      <div
+                                        key={label}
+                                        className="bg-muted/40 rounded-md px-2.5 py-1.5 text-center"
+                                      >
+                                        <p className="text-xs font-mono font-semibold">{val.toFixed(1)}</p>
+                                        <p className="text-[9px] text-muted-foreground">{label}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {s.quality.rationale && (
+                                    <p className="text-xs text-muted-foreground mt-1 italic">
+                                      &ldquo;{s.quality.rationale}&rdquo;
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                              {s.text_metrics && (
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                    Text Metrics
+                                  </p>
+                                  <div className="flex gap-3 flex-wrap">
+                                    {(
+                                      [
+                                        ["Words", String(s.text_metrics.word_count)],
+                                        ["TTR", s.text_metrics.type_token_ratio.toFixed(3)],
+                                        ["Compress", s.text_metrics.compression_ratio.toFixed(3)],
+                                        ["N-gram Rep", pct(s.text_metrics.ngram_repetition_rate * 100)],
+                                        ["Avg Sent", `${s.text_metrics.avg_sentence_length.toFixed(0)}w`],
+                                        ["Fillers", String(s.text_metrics.filler_phrase_count)],
+                                      ] as [string, string][]
+                                    ).map(([label, val]) => (
+                                      <div
+                                        key={label}
+                                        className="bg-muted/40 rounded-md px-2.5 py-1.5 text-center"
+                                      >
+                                        <p className="text-xs font-mono font-semibold">{val}</p>
+                                        <p className="text-[9px] text-muted-foreground">{label}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {s.output && (
                                 <div>
                                   <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">

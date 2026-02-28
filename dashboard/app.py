@@ -63,13 +63,19 @@ def _to_frontend_json(
     planner_result: PlannerResult,
     plan: ExecutionPlan,
     result: ExecutorResult,
+    subtask_qualities: dict | None = None,
+    subtask_text_metrics: dict | None = None,
+    deliverable_quality: dict | None = None,
+    deliverable_text_metrics: dict | None = None,
+    evaluation_cost: float = 0.0,
 ) -> dict:
     """Transform our backend models to the JSON shape the frontend expects."""
     r = result.report
     graph = planner_result.graph
     subtask_map = {s.id: s for s in graph.subtasks}
+    sq = subtask_qualities or {}
+    stm = subtask_text_metrics or {}
 
-    # 1. Budget summary (frontend expects utilization as 0-1 ratio)
     budget_summary = {
         "dollar_budget": r.budget_dollars,
         "dollar_spent": r.spent_dollars,
@@ -77,10 +83,9 @@ def _to_frontend_json(
         "budget_utilization": r.utilization_pct / 100.0,
     }
 
-    # 2. Per-subtask metrics
     subtask_metrics = []
     for sr in r.subtask_results:
-        subtask_metrics.append({
+        entry: dict = {
             "subtask_id": sr.subtask_id,
             "name": _short_label(sr.description),
             "description": sr.description,
@@ -90,7 +95,12 @@ def _to_frontend_json(
             "tokens_consumed": sr.completion_tokens,
             "cost_dollars": sr.cost_dollars,
             "surplus_returned": sr.surplus,
-        })
+        }
+        if sr.subtask_id in sq:
+            entry["quality"] = sq[sr.subtask_id]
+        if sr.subtask_id in stm:
+            entry["text_metrics"] = stm[sr.subtask_id]
+        subtask_metrics.append(entry)
 
     # 3. Tier distribution
     total_active = sum(1 for sr in r.subtask_results if not sr.skipped)
@@ -198,7 +208,7 @@ def _to_frontend_json(
         ),
     }
 
-    return {
+    out = {
         "budget_summary": budget_summary,
         "subtask_metrics": subtask_metrics,
         "tier_distribution": tier_distribution,
@@ -211,6 +221,13 @@ def _to_frontend_json(
         "budget_input": budget,
         "deliverable": result.deliverable,
     }
+    if deliverable_quality:
+        out["deliverable_quality"] = deliverable_quality
+    if deliverable_text_metrics:
+        out["deliverable_text_metrics"] = deliverable_text_metrics
+    if evaluation_cost > 0:
+        out["evaluation_cost"] = evaluation_cost
+    return out
 
 
 @app.route("/api/run", methods=["POST"])
@@ -255,7 +272,13 @@ def run():
         planner_cost_dollars=planner_cost,
     )
 
-    # Step 4 — Trace (background, best-effort)
+    # Step 4 — Evaluate quality and compute text metrics
+    subtask_qualities: dict[int, dict] = {}
+    subtask_text_metrics_map: dict[int, dict] = {}
+    deliverable_quality_dict = None
+    deliverable_tm_dict = None
+    eval_cost = 0.0
+
     try:
         evaluator = EvaluatorAgent(api_key=api_key)
         planner_trace = PlannerTrace(
@@ -272,9 +295,12 @@ def run():
             if not sr.skipped and sr.output:
                 try:
                     quality = evaluator.evaluate_subtask(sr.description, sr.output, task)
+                    subtask_qualities[sr.subtask_id] = quality.model_dump()
                 except Exception:
                     pass
-            text_metrics = compute_text_metrics(sr.output) if sr.output else None
+            tm = compute_text_metrics(sr.output) if sr.output else None
+            if tm:
+                subtask_text_metrics_map[sr.subtask_id] = tm.model_dump()
             subtask_traces.append(SubTaskTrace(
                 subtask_id=sr.subtask_id, description=sr.description,
                 tier=sr.tier, model=sr.model, max_tokens=sr.tokens_budgeted,
@@ -283,27 +309,40 @@ def run():
                 completion_tokens=sr.completion_tokens,
                 total_tokens=sr.total_tokens,
                 cost_dollars=sr.cost_dollars, surplus=sr.surplus,
-                skipped=sr.skipped, quality=quality, text_metrics=text_metrics,
+                skipped=sr.skipped, quality=quality, text_metrics=tm,
             ))
         deliverable_quality = None
         if result.deliverable:
             try:
                 deliverable_quality = evaluator.evaluate_deliverable(task, result.deliverable)
+                deliverable_quality_dict = deliverable_quality.model_dump()
             except Exception:
                 pass
+            dtm = compute_text_metrics(result.deliverable)
+            deliverable_tm_dict = dtm.model_dump()
+
+        eval_cost = evaluator.total_cost_dollars
+
         trace = RunTrace(
             task=task, budget_dollars=budget,
             planner_trace=planner_trace, subtask_traces=subtask_traces,
             deliverable=result.deliverable,
             deliverable_quality=deliverable_quality,
             total_cost_dollars=result.report.spent_dollars,
-            evaluation_cost_dollars=evaluator.total_cost_dollars,
+            evaluation_cost_dollars=eval_cost,
         )
         save_trace(trace)
     except Exception:
         pass
 
-    frontend_json = _to_frontend_json(task, budget, planner_result, plan, result)
+    frontend_json = _to_frontend_json(
+        task, budget, planner_result, plan, result,
+        subtask_qualities=subtask_qualities,
+        subtask_text_metrics=subtask_text_metrics_map,
+        deliverable_quality=deliverable_quality_dict,
+        deliverable_text_metrics=deliverable_tm_dict,
+        evaluation_cost=eval_cost,
+    )
     latest_report = frontend_json
     return jsonify(frontend_json)
 
@@ -375,4 +414,4 @@ def api_traces():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001)
