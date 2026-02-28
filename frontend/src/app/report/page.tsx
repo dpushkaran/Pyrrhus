@@ -26,6 +26,10 @@ function dollars(n: number) {
   return `$${n.toFixed(4)}`;
 }
 
+function microDollars(n: number) {
+  return `$${n.toFixed(6)}`;
+}
+
 function pct(n: number) {
   return `${n.toFixed(1)}%`;
 }
@@ -42,9 +46,40 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ChevronDown({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<CostReport | null>(null);
+  const [expandedSubtasks, setExpandedSubtasks] = useState<Set<number>>(
+    new Set()
+  );
+
+  function toggleSubtask(id: number) {
+    setExpandedSubtasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     const raw = sessionStorage.getItem("pyrrhus_report");
@@ -57,7 +92,16 @@ export default function ReportPage() {
 
   if (!report) return null;
 
-  const { budget_summary: budget, subtask_metrics: subtasks, tier_distribution: tiers, downgrade_report: downgrades, efficiency_stats: efficiency, task_graph_summary: graphSummary, dag } = report;
+  const {
+    budget_summary: budget,
+    subtask_metrics: subtasks,
+    tier_distribution: tiers,
+    downgrade_report: downgrades,
+    efficiency_stats: efficiency,
+    task_graph_summary: graphSummary,
+    dag,
+    savings,
+  } = report;
 
   const hasDowngrades =
     downgrades &&
@@ -149,7 +193,118 @@ export default function ReportPage() {
           </div>
         </section>
 
-        {/* 2. Per-Subtask Breakdown */}
+        {/* Savings Comparison */}
+        {savings && (
+          <section>
+            <SectionHeading>Savings — Pyrrhus vs. Single-Tier</SectionHeading>
+            <div className="grid md:grid-cols-3 gap-3 mb-4">
+              <Card>
+                <CardHeader className="pb-0">
+                  <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                    Without Pyrrhus
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold font-mono tracking-tight text-muted-foreground line-through decoration-1">
+                    {microDollars(savings.naive_total)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    all subtasks at Deep tier
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-0">
+                  <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                    With Pyrrhus
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold font-mono tracking-tight">
+                    {microDollars(savings.actual_total)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    optimized tier routing
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/30">
+                <CardHeader className="pb-0">
+                  <CardTitle className="text-xs text-green-700 dark:text-green-400 font-medium uppercase tracking-wide">
+                    You Saved
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold font-mono tracking-tight text-green-700 dark:text-green-400">
+                    {pct(savings.savings_pct)}
+                  </p>
+                  <p className="text-xs text-green-600/80 dark:text-green-500/80 mt-1">
+                    {microDollars(savings.total_saved)} saved
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-sm text-muted-foreground mb-4">
+                  {savings.explanation}
+                </p>
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">#</TableHead>
+                        <TableHead>Subtask</TableHead>
+                        <TableHead>Tier Used</TableHead>
+                        <TableHead className="text-right">
+                          Deep Cost
+                        </TableHead>
+                        <TableHead className="text-right">
+                          Actual Cost
+                        </TableHead>
+                        <TableHead className="text-right">Saved</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {savings.items.map((item) => (
+                        <TableRow key={item.subtask_id}>
+                          <TableCell className="font-mono text-muted-foreground">
+                            {item.subtask_id}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {item.name}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className="font-mono text-xs uppercase"
+                            >
+                              {item.tier_used}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">
+                            {microDollars(item.naive_cost)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {microDollars(item.actual_cost)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-green-700 dark:text-green-400">
+                            {item.saved > 0
+                              ? `−${microDollars(item.saved)}`
+                              : microDollars(item.saved)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {/* 2. Per-Subtask Breakdown (expandable) */}
         <section>
           <SectionHeading>Per-Subtask Breakdown</SectionHeading>
           <div className="border rounded-lg overflow-hidden">
@@ -166,33 +321,81 @@ export default function ReportPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {subtasks.map((s) => (
-                  <TableRow key={s.subtask_id}>
-                    <TableCell className="font-mono text-muted-foreground">
-                      {s.subtask_id}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {s.name}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono text-xs uppercase">
-                        {s.tier}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {num(s.tokens_budgeted)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {num(s.tokens_consumed)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {dollars(s.cost_dollars)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
-                      +{num(s.surplus_returned)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {subtasks.map((s) => {
+                  const isExpanded = expandedSubtasks.has(s.subtask_id);
+                  return (
+                    <>
+                      <TableRow
+                        key={s.subtask_id}
+                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => toggleSubtask(s.subtask_id)}
+                      >
+                        <TableCell className="font-mono text-muted-foreground">
+                          {s.subtask_id}
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-1.5">
+                            <ChevronDown
+                              className={`shrink-0 text-muted-foreground transition-transform duration-200 ${
+                                isExpanded ? "rotate-180" : ""
+                              }`}
+                            />
+                            <span className="truncate">{s.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-xs uppercase"
+                          >
+                            {s.tier}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {num(s.tokens_budgeted)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {num(s.tokens_consumed)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {dollars(s.cost_dollars)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          +{num(s.surplus_returned)}
+                        </TableCell>
+                      </TableRow>
+                      {isExpanded && (
+                        <TableRow key={`${s.subtask_id}-detail`}>
+                          <TableCell />
+                          <TableCell colSpan={6} className="pb-4">
+                            <div className="space-y-3">
+                              <div>
+                                <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                  Full Description
+                                </p>
+                                <p className="text-sm leading-relaxed">
+                                  {s.description}
+                                </p>
+                              </div>
+                              {s.output && (
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                    Output
+                                  </p>
+                                  <div className="bg-muted/40 rounded-md p-3 max-h-64 overflow-y-auto">
+                                    <pre className="text-xs whitespace-pre-wrap font-mono leading-relaxed">
+                                      {s.output}
+                                    </pre>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -227,9 +430,18 @@ export default function ReportPage() {
                 <CardContent className="pt-6">
                   <dl className="space-y-3">
                     {[
-                      ["Tokens budgeted", num(efficiency.total_tokens_budgeted)],
-                      ["Tokens consumed", num(efficiency.total_tokens_consumed)],
-                      ["Surplus generated", num(efficiency.total_surplus_generated)],
+                      [
+                        "Tokens budgeted",
+                        num(efficiency.total_tokens_budgeted),
+                      ],
+                      [
+                        "Tokens consumed",
+                        num(efficiency.total_tokens_consumed),
+                      ],
+                      [
+                        "Surplus generated",
+                        num(efficiency.total_surplus_generated),
+                      ],
                       ["Token efficiency", pct(efficiency.token_efficiency)],
                     ].map(([label, value]) => (
                       <div
@@ -280,11 +492,17 @@ export default function ReportPage() {
                       className="flex items-center gap-2 text-sm"
                     >
                       <span>{d.name}</span>
-                      <Badge variant="outline" className="font-mono text-xs uppercase">
+                      <Badge
+                        variant="outline"
+                        className="font-mono text-xs uppercase"
+                      >
                         {d.original_tier}
                       </Badge>
                       <span className="text-muted-foreground">&rarr;</span>
-                      <Badge variant="outline" className="font-mono text-xs uppercase">
+                      <Badge
+                        variant="outline"
+                        className="font-mono text-xs uppercase"
+                      >
                         {d.final_tier}
                       </Badge>
                     </div>
@@ -373,6 +591,22 @@ export default function ReportPage() {
             </CardContent>
           </Card>
         </section>
+
+        {/* Deliverable */}
+        {report.deliverable && (
+          <section>
+            <SectionHeading>Final Output</SectionHeading>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed bg-muted/40 rounded-md p-4 overflow-x-auto">
+                    {report.deliverable}
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
 
         <Separator />
         <footer className="text-right text-[10px] uppercase tracking-[.1em] text-muted-foreground pb-8">
