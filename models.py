@@ -36,7 +36,6 @@ COMPLEXITY_TO_TIER = {
     Complexity.HIGH: Tier.DEEP,
 }
 
-# Dollars per 1M input tokens (approximate, used for budget conversion)
 TIER_PRICING_PER_1M_INPUT = {
     Tier.FAST: 0.10,
     Tier.DEEP: 1.25,
@@ -48,6 +47,11 @@ TIER_PRICING_PER_1M_OUTPUT = {
     Tier.DEEP: 10.00,
     Tier.VERIFY: 0.60,
 }
+
+
+# ---------------------------------------------------------------------------
+# Planner models
+# ---------------------------------------------------------------------------
 
 
 class SubTask(BaseModel):
@@ -74,6 +78,11 @@ class PlannerResult(BaseModel):
     model: str
 
 
+# ---------------------------------------------------------------------------
+# Allocator models
+# ---------------------------------------------------------------------------
+
+
 class SubTaskAllocation(BaseModel):
     subtask_id: int
     tier: Tier
@@ -93,56 +102,7 @@ class ExecutionPlan(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Output metric models (populated after a run completes)
-# ---------------------------------------------------------------------------
-
-
-class BudgetSummary(BaseModel):
-    dollar_budget: float
-    dollar_spent: float
-    dollar_remaining: float
-    budget_utilization: float
-
-
-class SubtaskMetrics(BaseModel):
-    subtask_id: int
-    name: str
-    tier: Tier
-    tokens_budgeted: int
-    tokens_consumed: int
-    cost_dollars: float
-    surplus_returned: int
-
-
-class TierDistribution(BaseModel):
-    tier: Tier
-    count: int
-    percentage: float
-
-
-class DowngradeEntry(BaseModel):
-    subtask_id: int
-    name: str
-    original_tier: Tier
-    final_tier: Tier
-
-
-class DowngradeReport(BaseModel):
-    original_plan_cost: float
-    final_plan_cost: float
-    downgrades: list[DowngradeEntry] = []
-    subtasks_skipped: list[str] = []
-
-
-class EfficiencyStats(BaseModel):
-    total_tokens_budgeted: int
-    total_tokens_consumed: int
-    total_surplus_generated: int
-    token_efficiency: float
-
-
-class TaskGraphSummary(BaseModel):
-# Executor output models
+# Executor models
 # ---------------------------------------------------------------------------
 
 
@@ -162,43 +122,30 @@ class SubTaskResult(BaseModel):
 
 
 class CostReport(BaseModel):
-    # Budget summary
     budget_dollars: float
     spent_dollars: float
     remaining_dollars: float
     utilization_pct: float
 
-    # Per-subtask breakdown
     subtask_results: list[SubTaskResult]
 
-    # Tier distribution
     tier_counts: dict[str, int]
     subtasks_skipped: int
     subtasks_downgraded: int
 
-    # Downgrade report
     downgrades_applied: list[str]
 
-    # Efficiency
     total_tokens_budgeted: int
     total_tokens_consumed: int
     total_surplus: int
     token_efficiency_pct: float
 
-    # Task graph summary
     total_subtasks: int
     max_depth: int
     parallelizable_subtasks: int
     complexity_distribution: dict[str, int]
 
 
-class CostReport(BaseModel):
-    budget_summary: BudgetSummary
-    subtask_metrics: list[SubtaskMetrics]
-    tier_distribution: list[TierDistribution]
-    downgrade_report: Optional[DowngradeReport] = None
-    efficiency_stats: EfficiencyStats
-    task_graph_summary: TaskGraphSummary
 class ExecutorResult(BaseModel):
     deliverable: str
     report: CostReport
