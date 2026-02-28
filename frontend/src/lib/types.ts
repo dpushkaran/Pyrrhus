@@ -8,6 +8,8 @@ export interface BudgetSummary {
 export interface SubtaskMetrics {
   subtask_id: number;
   name: string;
+  description: string;
+  output: string;
   tier: string;
   tokens_budgeted: number;
   tokens_consumed: number;
@@ -65,6 +67,24 @@ export interface Dag {
   edges: DagEdge[];
 }
 
+export interface SavingsItem {
+  subtask_id: number;
+  name: string;
+  tier_used: string;
+  naive_cost: number;
+  actual_cost: number;
+  saved: number;
+}
+
+export interface SavingsReport {
+  naive_total: number;
+  actual_total: number;
+  total_saved: number;
+  savings_pct: number;
+  items: SavingsItem[];
+  explanation: string;
+}
+
 export interface CostReport {
   budget_summary: BudgetSummary;
   subtask_metrics: SubtaskMetrics[];
@@ -73,6 +93,8 @@ export interface CostReport {
   efficiency_stats: EfficiencyStats;
   task_graph_summary: TaskGraphSummary;
   dag: Dag;
+  savings?: SavingsReport;
   task_input?: string;
   budget_input?: number;
+  deliverable?: string;
 }

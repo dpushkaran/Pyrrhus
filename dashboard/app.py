@@ -76,6 +76,8 @@ def _to_frontend_json(
         subtask_metrics.append({
             "subtask_id": sr.subtask_id,
             "name": _short_label(sr.description),
+            "description": sr.description,
+            "output": sr.output,
             "tier": sr.tier.value,
             "tokens_budgeted": sr.tokens_budgeted,
             "tokens_consumed": sr.completion_tokens,
@@ -150,6 +152,45 @@ def _to_frontend_json(
         for dep in s.dependencies:
             dag_edges.append({"from": dep, "to": s.id})
 
+    # 8. Savings comparison — what if every subtask ran at Deep tier?
+    savings_items = []
+    total_naive = 0.0
+    total_actual = 0.0
+    for sr in r.subtask_results:
+        if sr.skipped:
+            continue
+        naive = (
+            sr.prompt_tokens * TIER_PRICING_PER_1M_INPUT[Tier.DEEP] / 1_000_000
+            + sr.completion_tokens * TIER_PRICING_PER_1M_OUTPUT[Tier.DEEP] / 1_000_000
+        )
+        actual = sr.cost_dollars
+        savings_items.append({
+            "subtask_id": sr.subtask_id,
+            "name": _short_label(sr.description),
+            "tier_used": sr.tier.value,
+            "naive_cost": round(naive, 8),
+            "actual_cost": round(actual, 8),
+            "saved": round(naive - actual, 8),
+        })
+        total_naive += naive
+        total_actual += actual
+
+    savings = {
+        "naive_total": round(total_naive, 8),
+        "actual_total": round(total_actual, 8),
+        "total_saved": round(total_naive - total_actual, 8),
+        "savings_pct": round(
+            (total_naive - total_actual) / total_naive * 100, 1
+        ) if total_naive > 0 else 0,
+        "items": savings_items,
+        "explanation": (
+            "Naive cost assumes every subtask runs at Deep tier "
+            "(gemini-2.5-pro at $1.25/1M input, $10.00/1M output). "
+            "Pyrrhus routes low-complexity work to cheaper tiers, "
+            "saving money without sacrificing quality where it matters."
+        ),
+    }
+
     return {
         "budget_summary": budget_summary,
         "subtask_metrics": subtask_metrics,
@@ -158,6 +199,7 @@ def _to_frontend_json(
         "efficiency_stats": efficiency_stats,
         "task_graph_summary": task_graph_summary,
         "dag": {"nodes": dag_nodes, "edges": dag_edges},
+        "savings": savings,
         "task_input": task,
         "budget_input": budget,
         "deliverable": result.deliverable,
