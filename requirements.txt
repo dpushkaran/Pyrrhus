@@ -3,5 +3,6 @@ pydantic
 python-dotenv
 flask
 flask-cors
+supabase
 matplotlib
 numpy
