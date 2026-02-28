@@ -3,5 +3,5 @@ pydantic
 python-dotenv
 flask
 flask-cors
-flask
-flask-cors
+matplotlib
+numpy
