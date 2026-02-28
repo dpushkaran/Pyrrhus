@@ -10,13 +10,21 @@ An orchestration layer that decomposes tasks into a dependency graph, routes eac
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                        User Interface                   │
+│              User Interface (Next.js + shadcn/ui)       │
+│              Deployed on Vercel (static export)         │
 │                                                         │
 │   Task description + Dollar budget                      │
 │         │                                               │
 │         ▼                                               │
+│   POST /api/run → Flask API (JSON)                      │
+│         │                                               │
+│         ▼                                               │
 │   Dollar budget → Token budget conversion               │
 │   (using per-model pricing rates)                       │
+│         │                                               │
+│         ▼                                               │
+│   Dashboard renders CostReport with all 6 metric        │
+│   sections + interactive dependency graph (SVG DAG)     │
 └───────────────────────┬─────────────────────────────────┘
                         │
                         ▼
@@ -371,10 +379,22 @@ Each component maps directly to CAL primitives:
 ### Supporting
 
 
-| Component      | Tool           | Why                                              |
-| -------------- | -------------- | ------------------------------------------------ |
-| Data classes   | **Pydantic**   | Structured task graph and execution plan schemas |
-| Env management | **.env files** | API keys only                                    |
+| Component      | Tool                | Why                                                                        |
+| -------------- | ------------------- | -------------------------------------------------------------------------- |
+| Data classes   | **Pydantic**        | Structured task graph and execution plan schemas                           |
+| Env management | **.env files**      | API keys only                                                              |
+| API server     | **Flask + CORS**    | Lightweight JSON API exposing `/api/run` and `/api/report` to the frontend |
+
+### Frontend
+
+
+| Component       | Tool                   | Why                                                                           |
+| --------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| Framework       | **Next.js 14**         | App Router, static export for Vercel deployment, TypeScript                   |
+| UI components   | **shadcn/ui**          | Pre-built accessible components (Card, Table, Badge, Progress, etc.)          |
+| Styling         | **Tailwind CSS**       | Utility-first CSS, monochromatic neutral theme via shadcn/ui                  |
+| Fonts           | **Inter + JetBrains Mono** | Clean sans-serif for UI, monospace for data — loaded via `next/font`      |
+| Deployment      | **Vercel**             | Zero-config static hosting for the Next.js export                             |
 
 
 ### NOT Using
@@ -384,8 +404,7 @@ Each component maps directly to CAL primitives:
 | ----------------- | -------------------------------------------------------------------------------------------------------- |
 | LangChain         | Adds abstraction without value. CAL decorators give us direct control over routing and budget mechanics. |
 | Vector DB         | No RAG component. Subtask context is passed directly via FullCompressionMemory.                          |
-| FastAPI / Next.js | No web server or dashboard in scope. CLI or notebook interface sufficient.                               |
-| Docker            | No multi-service deployment. Single Python process.                                                      |
+| Docker            | No multi-service deployment. Python API + static frontend.                                               |
 
 
 ---
@@ -408,6 +427,29 @@ Each component maps directly to CAL primitives:
 │   ├── reallocate_surplus.py # @tool — returns surplus tokens to pool
 │   └── build_report.py       # @tool — assembles CostReport with all metric categories
 │
+├── dashboard/
+│   ├── __init__.py
+│   └── app.py                # Flask API server — JSON-only, CORS-enabled
+│                              #   POST /api/run    — accepts task + budget, returns CostReport
+│                              #   GET  /api/report — returns latest report
+│
+├── frontend/                  # Next.js 14 + shadcn/ui (static export → Vercel)
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── layout.tsx     # Root layout — Inter + JetBrains Mono fonts
+│   │   │   ├── page.tsx       # Input page — task textarea + budget field + Run button
+│   │   │   └── report/
+│   │   │       └── page.tsx   # Dashboard — all 6 metric sections + DAG
+│   │   ├── components/
+│   │   │   ├── dag-graph.tsx  # SVG dependency graph React component
+│   │   │   └── ui/           # shadcn/ui components (card, table, badge, etc.)
+│   │   └── lib/
+│   │       ├── types.ts       # TypeScript interfaces mirroring Pydantic models
+│   │       └── utils.ts       # shadcn/ui utility (cn)
+│   ├── next.config.ts         # output: "export" for static generation
+│   ├── package.json
+│   └── tailwind.config.ts
+│
 ├── models.py                 # Pydantic schemas: SubTask, TaskGraph, ExecutionPlan,
 │                              #   CostReport, SubtaskMetrics, TierDistribution,
 │                              #   DowngradeReport, EfficiencyStats, TaskGraphSummary
@@ -416,7 +458,7 @@ Each component maps directly to CAL primitives:
 ├── main.py                   # Entry point: accept task + budget, run pipeline, print report
 │
 ├── .env.example              # GOOGLE_API_KEY
-├── requirements.txt
+├── requirements.txt          # Python deps (google-genai, pydantic, flask, flask-cors)
 └── ARCHITECTURE.md           # This file
 ```
 
@@ -431,4 +473,5 @@ Each component maps directly to CAL primitives:
 5. **FullCompressionMemory prevents context blowup.** Passing all prior subtask outputs verbatim would exhaust token budgets on later subtasks. FullCompressionMemory compresses history to fit within the receiving agent's cap.
 6. **Agents are stateless per invocation.** Each tier agent call is a single LLM invocation with a prompt template plus compressed context. No persistent state between calls.
 7. **The Executor is itself a CAL agent.** Its tools are the three tier agents (via `@subagent`) plus `track_usage` and `reallocate_surplus` (via `@tool`). This keeps the orchestration logic expressible as a single agent loop rather than imperative orchestration code.
+8. **Frontend and backend are decoupled.** The Next.js frontend is a static export deployed to Vercel. The Flask API serves JSON only — no templates, no server-rendered HTML. The frontend communicates via `NEXT_PUBLIC_API_URL`, making the API host configurable per environment. This separation allows independent deployment and scaling of the UI and the orchestration backend.
 
