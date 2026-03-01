@@ -32,8 +32,13 @@ Rules:
    - high: creative writing, trend analysis, multi-source reasoning, long-form composition.
 4. List dependency IDs — subtasks that MUST complete before this one can start.
 5. The subtasks must form a valid DAG (no circular dependencies).
-6. Aim for 3–7 subtasks. Prefer fewer, coarser subtasks over many tiny ones.
-7. The final subtask should always produce or review the user-facing deliverable.\
+6. Aim for 3–5 subtasks. Prefer fewer, coarser subtasks over many tiny ones.
+   Each subtask should produce a DISTINCT section of the deliverable — never \
+   repeat or summarise work already done by a prior subtask.
+7. The final subtask must synthesise all prior outputs into a single, \
+   cohesive, user-facing deliverable. Its description should say so explicitly.
+8. If the task is simple enough to be answered directly (e.g. a short \
+   question, a single translation, a lookup), produce exactly ONE subtask.\
 """
 
 

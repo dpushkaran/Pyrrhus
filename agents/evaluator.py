@@ -7,6 +7,8 @@ import logging
 from google import genai
 from google.genai import types
 
+from pydantic import BaseModel, Field
+
 from models import QualityScore
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,20 @@ Also provide:
 
 Be critical. Reserve 9-10 for exceptional work only.\
 """
+
+QUICK_EVAL_SYSTEM = """\
+You are a strict, fast quality evaluator. Given a subtask description, the \
+overall task context, and the output produced, provide:
+- score (0-10): holistic quality score for how well the output addresses the subtask.
+- reason: one short sentence explaining the score.
+Be critical. Reserve 9-10 for exceptional work only.\
+"""
+
+
+class QuickScore(BaseModel):
+    score: float = Field(..., ge=0, le=10)
+    reason: str = ""
+
 
 DELIVERABLE_SYSTEM_INSTRUCTION = """\
 You are a strict quality evaluator. Given the original user task and the final \
@@ -59,6 +75,43 @@ class EvaluatorAgent:
         self.model = model
         self.total_tokens_used = 0
         self.total_cost_dollars = 0.0
+
+    def quick_score(
+        self,
+        subtask_description: str,
+        output: str,
+        task_context: str,
+    ) -> tuple[float, str]:
+        """Return a fast (score, reason) tuple for an in-loop quality gate."""
+        prompt = (
+            f"OVERALL TASK: {task_context}\n\n"
+            f"SUBTASK: {subtask_description}\n\n"
+            f"OUTPUT:\n{output}"
+        )
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=QUICK_EVAL_SYSTEM,
+                response_mime_type="application/json",
+                response_schema=QuickScore,
+                temperature=0.1,
+            ),
+        )
+        qs = QuickScore.model_validate_json(response.text)
+
+        prompt_tokens = response.usage_metadata.prompt_token_count or 0
+        completion_tokens = response.usage_metadata.candidates_token_count or 0
+        total_tokens = response.usage_metadata.total_token_count or 0
+        input_cost = prompt_tokens * 0.10 / 1_000_000
+        output_cost = completion_tokens * 0.40 / 1_000_000
+        self.total_cost_dollars += input_cost + output_cost
+        self.total_tokens_used += total_tokens
+
+        logger.info(
+            "QuickEval scored %.1f/10 (%d tokens)", qs.score, total_tokens,
+        )
+        return qs.score, qs.reason
 
     def evaluate_subtask(
         self,

@@ -108,6 +108,28 @@ class ExecutionPlan(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class SubTaskAttempt(BaseModel):
+    tier: Tier
+    model: str
+    output: str
+    quality_score: float
+    cost_dollars: float
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class ROIDecision(BaseModel):
+    subtask_id: int
+    current_tier: Tier
+    current_quality: float
+    proposed_tier: Tier
+    upgrade_cost_estimate: float
+    expected_quality_lift: float
+    roi: float
+    decision: str  # "upgrade" | "accept" | "budget_exceeded"
+    reason: str
+
+
 class SubTaskResult(BaseModel):
     subtask_id: int
     description: str
@@ -122,6 +144,9 @@ class SubTaskResult(BaseModel):
     output: str
     skipped: bool = False
     prompt: str = ""
+    attempts: list[SubTaskAttempt] = []
+    roi_decisions: list[ROIDecision] = []
+    final_attempt_index: int = 0
 
 
 class CostReport(BaseModel):
@@ -147,6 +172,10 @@ class CostReport(BaseModel):
     max_depth: int
     parallelizable_subtasks: int
     complexity_distribution: dict[str, int]
+
+    total_upgrades: int = 0
+    roi_decisions: list[ROIDecision] = []
+    evaluation_cost_dollars: float = 0.0
 
 
 class ExecutorResult(BaseModel):
