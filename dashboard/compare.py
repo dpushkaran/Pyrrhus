@@ -20,7 +20,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from agents.allocator import AllocatorAgent
+from agents.evaluator import EvaluatorAgent
 from agents.planner import PlannerAgent
 from models import (
     TIER_MAX_TOKENS,
@@ -191,90 +191,185 @@ def _sse(event: str, data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pyrrhus streaming thread
+# Dynamic ROI constants (mirrored from dynamic_executor)
+# ---------------------------------------------------------------------------
+
+_TIER_LADDER: list[Tier] = [Tier.FAST, Tier.VERIFY, Tier.DEEP]
+_EXPECTED_LIFT = {
+    (Tier.FAST, Tier.VERIFY): 2.0,
+    (Tier.VERIFY, Tier.DEEP): 1.5,
+    (Tier.FAST, Tier.DEEP): 3.0,
+}
+_QUALITY_THRESHOLD = 6.0
+_MIN_ROI = 50.0
+_SYNTHESIS_RESERVE = 0.35
+
+
+def _estimate_tier_cost(tier: Tier) -> float:
+    return TIER_MAX_TOKENS[tier] * TIER_PRICING_PER_1M_OUTPUT[tier] / 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# Pyrrhus streaming thread (dynamic ROI)
 # ---------------------------------------------------------------------------
 
 def _run_pyrrhus(client: genai.Client, task: str, graph: TaskGraph,
-                 plan, planner_cost_dollars: float,
-                 event_queue: queue.Queue) -> None:
+                 planner_cost_dollars: float, budget_dollars: float,
+                 api_key: str, event_queue: queue.Queue) -> None:
+    """Run the dynamic ROI executor with streaming, emitting SSE events."""
     try:
-        alloc_map = {a.subtask_id: a for a in plan.allocations}
+        evaluator = EvaluatorAgent(api_key=api_key)
         subtask_map = {s.id: s for s in graph.subtasks}
         order = _topological_sort(graph)
+        total_subtasks = len(order)
+        final_id = order[-1] if order else None
+
+        remaining_total = budget_dollars - planner_cost_dollars
+        synthesis_reserve = remaining_total * _SYNTHESIS_RESERVE
+        upstream_budget = remaining_total - synthesis_reserve
+
         outputs: dict[int, str] = {}
         total_cost = planner_cost_dollars
-        total_subtasks = len(order)
+        upstream_spent = 0.0
 
         for idx, sid in enumerate(order):
-            alloc = alloc_map[sid]
             subtask = subtask_map[sid]
+            is_final = sid == final_id
 
-            if alloc.skipped:
-                event_queue.put({
-                    "type": "pyrrhus_subtask_done",
-                    "data": {
-                        "subtask_id": sid, "description": subtask.description,
-                        "skipped": True, "cost": 0, "tokens": 0, "output": "",
-                        "cost_so_far": total_cost,
-                        "progress": f"{idx + 1}/{total_subtasks}",
-                    },
-                })
-                continue
+            if is_final:
+                available = budget_dollars - total_cost
+            else:
+                available = min(
+                    upstream_budget - upstream_spent,
+                    budget_dollars - total_cost,
+                )
 
             prompt = _build_context(task, subtask.description,
                                     subtask.dependencies, outputs)
-            tier = alloc.tier
-            output_chunks: list[str] = []
-            est_output_tokens = 0
-            last_chunk = None
 
-            for chunk in client.models.generate_content_stream(
-                model=alloc.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=alloc.max_tokens,
-                    temperature=0.4,
-                ),
-            ):
-                last_chunk = chunk
-                delta = chunk.text or ""
-                if delta:
-                    output_chunks.append(delta)
-                    est_output_tokens += max(1, len(delta) // 4)
-                    est_cost = est_output_tokens * TIER_PRICING_PER_1M_OUTPUT[tier] / 1_000_000
-                    event_queue.put({
-                        "type": "pyrrhus_chunk",
-                        "data": {
-                            "subtask_id": sid, "delta": delta,
-                            "cost_so_far": round(total_cost + est_cost, 8),
-                            "progress": f"{idx + 1}/{total_subtasks}",
-                        },
-                    })
+            tier_idx = 0
+            best_output = ""
+            best_quality = 0.0
+            best_tier = Tier.FAST
+            subtask_cost = 0.0
 
-            full_output = "".join(output_chunks)
-            outputs[sid] = full_output
+            while tier_idx < len(_TIER_LADDER):
+                tier = _TIER_LADDER[tier_idx]
+                est = _estimate_tier_cost(tier)
+                if est > available:
+                    break
 
-            prompt_tokens = 0
-            completion_tokens = est_output_tokens
-            if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
-                um = last_chunk.usage_metadata
-                prompt_tokens = um.prompt_token_count or 0
-                completion_tokens = um.candidates_token_count or est_output_tokens
+                output_chunks: list[str] = []
+                est_output_tokens = 0
+                last_chunk = None
 
-            cost = (
-                prompt_tokens * TIER_PRICING_PER_1M_INPUT[tier] / 1_000_000
-                + completion_tokens * TIER_PRICING_PER_1M_OUTPUT[tier] / 1_000_000
-            )
-            total_cost += cost
+                for chunk in client.models.generate_content_stream(
+                    model=TIER_MODELS[tier],
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=TIER_MAX_TOKENS[tier],
+                        temperature=0.4,
+                    ),
+                ):
+                    last_chunk = chunk
+                    delta = chunk.text or ""
+                    if delta:
+                        output_chunks.append(delta)
+                        est_output_tokens += max(1, len(delta) // 4)
+                        est_cost = est_output_tokens * TIER_PRICING_PER_1M_OUTPUT[tier] / 1_000_000
+                        event_queue.put({
+                            "type": "pyrrhus_chunk",
+                            "data": {
+                                "subtask_id": sid, "delta": delta,
+                                "tier": tier.value,
+                                "cost_so_far": round(total_cost + subtask_cost + est_cost, 8),
+                                "progress": f"{idx + 1}/{total_subtasks}",
+                            },
+                        })
+
+                full_output = "".join(output_chunks)
+
+                p_tok = 0
+                c_tok = est_output_tokens
+                if last_chunk and hasattr(last_chunk, "usage_metadata") and last_chunk.usage_metadata:
+                    um = last_chunk.usage_metadata
+                    p_tok = um.prompt_token_count or 0
+                    c_tok = um.candidates_token_count or est_output_tokens
+
+                cost = (
+                    p_tok * TIER_PRICING_PER_1M_INPUT[tier] / 1_000_000
+                    + c_tok * TIER_PRICING_PER_1M_OUTPUT[tier] / 1_000_000
+                )
+                subtask_cost += cost
+                available -= cost
+
+                try:
+                    score, reason = evaluator.quick_score(
+                        subtask.description, full_output, task,
+                    )
+                except Exception:
+                    score, reason = 5.0, "evaluation failed"
+
+                if score > best_quality:
+                    best_output = full_output
+                    best_quality = score
+                    best_tier = tier
+
+                if score >= _QUALITY_THRESHOLD:
+                    break
+
+                if tier_idx + 1 < len(_TIER_LADDER):
+                    next_tier = _TIER_LADDER[tier_idx + 1]
+                    upgrade_est = _estimate_tier_cost(next_tier)
+                    lift = _EXPECTED_LIFT.get((tier, next_tier), 2.0)
+                    roi = lift / upgrade_est if upgrade_est > 0 else 0.0
+
+                    if roi >= _MIN_ROI and upgrade_est <= available:
+                        event_queue.put({
+                            "type": "roi_decision",
+                            "data": {
+                                "subtask_id": sid,
+                                "current_tier": tier.value,
+                                "current_quality": round(score, 1),
+                                "proposed_tier": next_tier.value,
+                                "roi": round(roi, 1),
+                                "decision": "upgrade",
+                                "reason": f"Quality {score:.1f} < {_QUALITY_THRESHOLD}, ROI {roi:.0f} — upgrading",
+                            },
+                        })
+                        tier_idx += 1
+                        continue
+                    else:
+                        dec = "budget_exceeded" if upgrade_est > available else "accept"
+                        event_queue.put({
+                            "type": "roi_decision",
+                            "data": {
+                                "subtask_id": sid,
+                                "current_tier": tier.value,
+                                "current_quality": round(score, 1),
+                                "proposed_tier": next_tier.value,
+                                "roi": round(roi, 1),
+                                "decision": dec,
+                                "reason": f"Quality {score:.1f}, ROI {roi:.0f} — {dec}",
+                            },
+                        })
+                break
+
+            outputs[sid] = best_output
+            total_cost += subtask_cost
+            if not is_final:
+                upstream_spent += subtask_cost
 
             event_queue.put({
                 "type": "pyrrhus_subtask_done",
                 "data": {
                     "subtask_id": sid, "description": subtask.description,
-                    "tier": tier.value, "skipped": False,
-                    "tokens": completion_tokens,
-                    "cost": round(cost, 8), "cost_so_far": round(total_cost, 8),
-                    "output": full_output,
+                    "tier": best_tier.value, "skipped": False,
+                    "quality": round(best_quality, 1),
+                    "tokens": c_tok,
+                    "cost": round(subtask_cost, 8),
+                    "cost_so_far": round(total_cost, 8),
+                    "output": best_output,
                     "progress": f"{idx + 1}/{total_subtasks}",
                 },
             })
@@ -395,36 +490,24 @@ def compare_stream():
             planner_result.usage.completion_tokens,
         )
 
-        allocator = AllocatorAgent()
-        plan = allocator.allocate(
-            graph=planner_result.graph,
-            budget_dollars=budget,
-            spent_dollars=pc,
-        )
-
         subtasks_info = [
             {"id": s.id, "description": s.description,
              "complexity": s.complexity.value, "dependencies": s.dependencies}
             for s in planner_result.graph.subtasks
         ]
-        allocations_info = [
-            {"subtask_id": a.subtask_id, "tier": a.tier.value,
-             "model": a.model, "max_tokens": a.max_tokens, "skipped": a.skipped}
-            for a in plan.allocations
-        ]
 
         yield _sse("plan", {
             "subtasks": subtasks_info,
-            "allocations": allocations_info,
             "planner_cost": round(pc, 8),
             "total_subtasks": len(subtasks_info),
+            "mode": "dynamic_roi",
         })
 
         event_q: queue.Queue = queue.Queue()
 
         pyrrhus_thread = threading.Thread(
             target=_run_pyrrhus,
-            args=(client, task, planner_result.graph, plan, pc, event_q),
+            args=(client, task, planner_result.graph, pc, budget, api_key, event_q),
             daemon=True,
         )
         baseline_thread = threading.Thread(

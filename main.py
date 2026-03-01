@@ -15,9 +15,8 @@ import time
 
 from dotenv import load_dotenv
 
-from agents.allocator import AllocatorAgent
+from agents.dynamic_executor import DynamicExecutor
 from agents.evaluator import EvaluatorAgent
-from agents.executor import ExecutorAgent
 from agents.planner import PlannerAgent
 from analysis.text_metrics import compute_text_metrics
 from analysis.trace_store import save_trace
@@ -93,60 +92,40 @@ def _run_single(api_key: str, task: str, budget: float, evaluate: bool) -> None:
     print(f"\n  Planner cost: ${planner_cost:.6f}  "
           f"({planner_result.usage.total_tokens} total tokens)")
 
-    # ── Step 2: Allocate ─────────────────────────────────────────────────
+    # ── Step 2: Dynamic Execution ──────────────────────────────────────
     print()
     print("=" * 64)
-    print("STEP 2 — ALLOCATOR")
+    print("STEP 2 — DYNAMIC EXECUTOR (ROI-driven)")
     print("=" * 64)
 
-    allocator = AllocatorAgent()
-    plan = allocator.allocate(
-        graph=planner_result.graph,
-        budget_dollars=budget,
-        spent_dollars=planner_cost,
-    )
-
-    print(f"  {'ID':<4} {'Tier':<8} {'Model':<20} {'MaxTok':<8} {'EstCost':<12} {'Status'}")
-    print(f"  {'─'*4} {'─'*8} {'─'*20} {'─'*8} {'─'*12} {'─'*6}")
-    for a in plan.allocations:
-        status = "SKIP" if a.skipped else "ok"
-        print(
-            f"  {a.subtask_id:<4} {a.tier.value:<8} {a.model:<20} "
-            f"{a.max_tokens:<8} ${a.estimated_cost_dollars:<11.6f} {status}"
-        )
-
-    if plan.downgrades_applied:
-        print(f"\n  Downgrades:")
-        for d in plan.downgrades_applied:
-            print(f"    • {d}")
-
-    # ── Step 3: Execute ──────────────────────────────────────────────────
-    print()
-    print("=" * 64)
-    print("STEP 3 — EXECUTOR")
-    print("=" * 64)
-
-    executor = ExecutorAgent(api_key=api_key)
+    executor = DynamicExecutor(api_key=api_key)
     result = executor.execute(
         task=task,
         graph=planner_result.graph,
-        plan=plan,
+        budget_dollars=budget,
         planner_cost_dollars=planner_cost,
     )
     r = result.report
 
     print()
     for sr in r.subtask_results:
-        if sr.skipped:
-            print(f"  [{sr.subtask_id}] SKIPPED")
-            continue
+        attempts_str = " → ".join(
+            f"{a.tier.value}({a.quality_score:.1f})" for a in sr.attempts
+        )
         print(
             f"  [{sr.subtask_id}] {sr.tier.value:<6} │ "
-            f"budget {sr.tokens_budgeted:>5} out │ "
-            f"used {sr.completion_tokens:>5} out ({sr.total_tokens:>5} total) │ "
-            f"${sr.cost_dollars:.6f} │ "
-            f"surplus +{sr.surplus}"
+            f"attempts: {attempts_str} │ "
+            f"${sr.cost_dollars:.6f}"
         )
+
+    if r.roi_decisions:
+        print(f"\n  ROI Decisions:")
+        for d in r.roi_decisions:
+            print(
+                f"    • Subtask {d.subtask_id}: {d.current_tier.value} → "
+                f"{d.proposed_tier.value} | quality {d.current_quality:.1f} | "
+                f"ROI {d.roi:.0f} | {d.decision}"
+            )
 
     # ── Step 4: Evaluate & trace ─────────────────────────────────────────
     evaluator = EvaluatorAgent(api_key=api_key) if evaluate else None
@@ -227,7 +206,7 @@ def _run_single(api_key: str, task: str, budget: float, evaluate: bool) -> None:
     for tier_name, count in r.tier_counts.items():
         if count > 0:
             print(f"    {tier_name:<8} {count} subtask(s)")
-    print(f"    Skipped: {r.subtasks_skipped}  │  Downgraded: {r.subtasks_downgraded}")
+    print(f"    Upgrades: {r.total_upgrades}  │  Eval cost: ${r.evaluation_cost_dollars:.6f}")
 
     print(f"\n  Efficiency")
     print(f"    Tokens budgeted:  {r.total_tokens_budgeted:,}")

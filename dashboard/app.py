@@ -12,9 +12,8 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from agents.allocator import AllocatorAgent
+from agents.dynamic_executor import DynamicExecutor
 from agents.evaluator import EvaluatorAgent
-from agents.executor import ExecutorAgent
 from agents.planner import PlannerAgent
 from analysis.text_metrics import compute_text_metrics
 from analysis.trace_store import load_traces, save_trace
@@ -24,10 +23,10 @@ from models import (
     TIER_PRICING_PER_1M_INPUT,
     TIER_PRICING_PER_1M_OUTPUT,
     CostReport,
-    ExecutionPlan,
     ExecutorResult,
     PlannerResult,
     PlannerTrace,
+    ROIDecision,
     RunTrace,
     SubTaskTrace,
     TaskGraph,
@@ -61,7 +60,6 @@ def _to_frontend_json(
     task: str,
     budget: float,
     planner_result: PlannerResult,
-    plan: ExecutionPlan,
     result: ExecutorResult,
     subtask_qualities: dict | None = None,
     subtask_text_metrics: dict | None = None,
@@ -100,6 +98,30 @@ def _to_frontend_json(
             entry["quality"] = sq[sr.subtask_id]
         if sr.subtask_id in stm:
             entry["text_metrics"] = stm[sr.subtask_id]
+        if sr.attempts:
+            entry["attempts"] = [
+                {
+                    "tier": a.tier.value,
+                    "quality_score": a.quality_score,
+                    "cost_dollars": a.cost_dollars,
+                }
+                for a in sr.attempts
+            ]
+        if sr.roi_decisions:
+            entry["roi_decisions"] = [
+                {
+                    "subtask_id": d.subtask_id,
+                    "current_tier": d.current_tier.value,
+                    "current_quality": d.current_quality,
+                    "proposed_tier": d.proposed_tier.value,
+                    "upgrade_cost_estimate": d.upgrade_cost_estimate,
+                    "expected_quality_lift": d.expected_quality_lift,
+                    "roi": d.roi,
+                    "decision": d.decision,
+                    "reason": d.reason,
+                }
+                for d in sr.roi_decisions
+            ]
         subtask_metrics.append(entry)
 
     # 3. Tier distribution
@@ -113,28 +135,26 @@ def _to_frontend_json(
                 "percentage": (count / total_active * 100) if total_active > 0 else 0,
             })
 
-    # 4. Downgrade report
-    downgrades_list = []
-    skipped_names = []
-    for sr in r.subtask_results:
-        st = subtask_map[sr.subtask_id]
-        default_tier = COMPLEXITY_TO_TIER[st.complexity]
-        if sr.skipped:
-            skipped_names.append(_short_label(sr.description))
-        elif sr.tier != default_tier:
-            downgrades_list.append({
-                "subtask_id": sr.subtask_id,
-                "name": _short_label(sr.description),
-                "original_tier": default_tier.value,
-                "final_tier": sr.tier.value,
-            })
+    # 4. Upgrade report (ROI-driven decisions)
+    upgrade_decisions = []
+    for d in r.roi_decisions:
+        upgrade_decisions.append({
+            "subtask_id": d.subtask_id,
+            "current_tier": d.current_tier.value,
+            "current_quality": d.current_quality,
+            "proposed_tier": d.proposed_tier.value,
+            "roi": d.roi,
+            "decision": d.decision,
+            "reason": d.reason,
+        })
 
-    downgrade_report = {
-        "original_plan_cost": plan.total_estimated_cost_dollars,
-        "final_plan_cost": r.spent_dollars,
-        "downgrades": downgrades_list,
-        "subtasks_skipped": skipped_names,
+    upgrade_report = {
+        "total_upgrades": r.total_upgrades,
+        "evaluation_cost": r.evaluation_cost_dollars,
+        "decisions": upgrade_decisions,
     }
+
+    downgrade_report = None
 
     # 5. Efficiency stats
     efficiency_stats = {
@@ -213,6 +233,7 @@ def _to_frontend_json(
         "subtask_metrics": subtask_metrics,
         "tier_distribution": tier_distribution,
         "downgrade_report": downgrade_report,
+        "upgrade_report": upgrade_report,
         "efficiency_stats": efficiency_stats,
         "task_graph_summary": task_graph_summary,
         "dag": {"nodes": dag_nodes, "edges": dag_edges},
@@ -255,20 +276,12 @@ def run():
         planner_result.usage.completion_tokens,
     )
 
-    # Step 2 — Allocate
-    allocator = AllocatorAgent()
-    plan = allocator.allocate(
-        graph=planner_result.graph,
-        budget_dollars=budget,
-        spent_dollars=planner_cost,
-    )
-
-    # Step 3 — Execute
-    executor = ExecutorAgent(api_key=api_key)
+    # Step 2 — Dynamic Execution (ROI-driven)
+    executor = DynamicExecutor(api_key=api_key)
     result = executor.execute(
         task=task,
         graph=planner_result.graph,
-        plan=plan,
+        budget_dollars=budget,
         planner_cost_dollars=planner_cost,
     )
 
@@ -336,7 +349,7 @@ def run():
         pass
 
     frontend_json = _to_frontend_json(
-        task, budget, planner_result, plan, result,
+        task, budget, planner_result, result,
         subtask_qualities=subtask_qualities,
         subtask_text_metrics=subtask_text_metrics_map,
         deliverable_quality=deliverable_quality_dict,
