@@ -21,6 +21,7 @@ from agents.planner import PlannerAgent
 from analysis.text_metrics import compute_text_metrics
 from analysis.trace_store import save_trace
 from batch_runner import run_batch
+from llm_provider import create_tier_llms
 from models import (
     TIER_PRICING_PER_1M_INPUT,
     TIER_PRICING_PER_1M_OUTPUT,
@@ -98,7 +99,8 @@ def _run_single(api_key: str, task: str, budget: float, evaluate: bool) -> None:
     print("STEP 2 — DYNAMIC EXECUTOR (ROI-driven)")
     print("=" * 64)
 
-    executor = DynamicExecutor(api_key=api_key)
+    tier_llms = create_tier_llms(api_key=api_key)
+    executor = DynamicExecutor(tier_llms=tier_llms, api_key=api_key)
     result = executor.execute(
         task=task,
         graph=planner_result.graph,

@@ -13,6 +13,7 @@ from agents.executor import ExecutorAgent
 from agents.planner import PlannerAgent
 from analysis.text_metrics import compute_text_metrics
 from analysis.trace_store import save_trace
+from llm_provider import create_tier_llms
 from models import (
     TIER_PRICING_PER_1M_INPUT,
     TIER_PRICING_PER_1M_OUTPUT,
@@ -125,7 +126,8 @@ def run_single(
         spent_dollars=pc,
     )
 
-    executor = ExecutorAgent(api_key=api_key)
+    tier_llms = create_tier_llms(api_key=api_key)
+    executor = ExecutorAgent(tier_llms=tier_llms)
     result = executor.execute(
         task=task,
         graph=planner_result.graph,

@@ -10,13 +10,8 @@ import { Separator } from "@/components/ui/separator";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5001";
 
 function StatCard({
   label,
@@ -64,24 +59,14 @@ export default function Home() {
   const router = useRouter();
   const [task, setTask] = useState("");
   const [budget, setBudget] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      const res = await fetch(`${API_URL}/api/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task, budget: parseFloat(budget) }),
-      });
-      const data = await res.json();
-      sessionStorage.setItem("pyrrhus_report", JSON.stringify(data));
-      router.push("/report");
-    } catch {
-      setLoading(false);
-    }
+  function handleCompare() {
+    if (!task.trim()) return;
+    const params = new URLSearchParams({
+      task: task.trim(),
+      ...(budget ? { budget } : {}),
+    });
+    router.push(`/compare?${params}`);
   }
 
   return (
@@ -268,7 +253,7 @@ export default function Home() {
               and show you exactly where every token went.
             </p>
 
-            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+            <div className="mt-6 space-y-5">
               <div className="space-y-1.5">
                 <label
                   htmlFor="task"
@@ -282,7 +267,6 @@ export default function Home() {
                   onChange={(e) => setTask(e.target.value)}
                   placeholder="e.g. Analyze 3 competitor products, draft positioning, and write launch copy for 2 audiences"
                   rows={3}
-                  required
                   className="resize-y"
                 />
               </div>
@@ -306,29 +290,19 @@ export default function Home() {
                     value={budget}
                     onChange={(e) => setBudget(e.target.value)}
                     placeholder="0.08"
-                    required
                     className="pl-7 font-mono"
                   />
                 </div>
               </div>
 
-              <div className="flex gap-3">
-                <Button
-                  type="submit"
-                  className="flex-1"
-                  disabled={loading}
-                >
-                  {loading ? "Running\u2026" : "Run"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => router.push("/compare")}
-                >
-                  Compare Side-by-Side
-                </Button>
-              </div>
-            </form>
+              <Button
+                onClick={handleCompare}
+                className="w-full"
+                disabled={!task.trim()}
+              >
+                Run Comparison
+              </Button>
+            </div>
           </div>
         </section>
 
