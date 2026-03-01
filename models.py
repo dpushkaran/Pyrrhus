@@ -27,9 +27,9 @@ TIER_MODELS = {
 }
 
 TIER_MAX_TOKENS = {
-    Tier.FAST: 1024,
-    Tier.DEEP: 4096,
-    Tier.VERIFY: 2048,
+    Tier.FAST: 2048,
+    Tier.DEEP: 8192,
+    Tier.VERIFY: 4096,
 }
 
 COMPLEXITY_TO_TIER = {

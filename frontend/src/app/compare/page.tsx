@@ -1,7 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { Suspense, useRef, useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -38,10 +41,26 @@ interface TextMetrics {
 type Phase = "input" | "streaming" | "done";
 
 export default function ComparePage() {
+  return (
+    <Suspense>
+      <ComparePageInner />
+    </Suspense>
+  );
+}
+
+function ComparePageInner() {
+  const searchParams = useSearchParams();
   const [task, setTask] = useState("");
   const [budget, setBudget] = useState("0.08");
   const [mode, setMode] = useState<"capped" | "uncapped">("capped");
   const [phase, setPhase] = useState<Phase>("input");
+
+  useEffect(() => {
+    const qTask = searchParams.get("task");
+    const qBudget = searchParams.get("budget");
+    if (qTask) setTask(qTask);
+    if (qBudget) setBudget(qBudget);
+  }, [searchParams]);
 
   // Pyrrhus state
   const [pyrrhusOutput, setPyrrhusOutput] = useState("");
@@ -72,6 +91,7 @@ export default function ComparePage() {
   const [finalPyrrhusCost, setFinalPyrrhusCost] = useState(0);
   const [finalBaselineCost, setFinalBaselineCost] = useState(0);
 
+  const [viewMode, setViewMode] = useState<"raw" | "preview">("preview");
   const esRef = useRef<EventSource | null>(null);
 
   function handleStart() {
@@ -332,6 +352,30 @@ export default function ComparePage() {
                 {task}
               </p>
               <div className="flex items-center gap-3">
+                <div className="flex gap-0.5 p-0.5 bg-muted rounded-md">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("preview")}
+                    className={`text-[10px] py-1 px-2.5 rounded transition-colors ${
+                      viewMode === "preview"
+                        ? "bg-background shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("raw")}
+                    className={`text-[10px] py-1 px-2.5 rounded transition-colors ${
+                      viewMode === "raw"
+                        ? "bg-background shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Raw
+                  </button>
+                </div>
                 <Badge variant="outline" className="font-mono text-xs">
                   ${parseFloat(budget).toFixed(2)} budget
                 </Badge>
@@ -506,16 +550,27 @@ export default function ComparePage() {
                   </div>
                 )}
                 <div className="flex-1 overflow-y-auto p-4">
-                  <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed">
-                    {pyrrhusOutput || (
-                      <span className="text-muted-foreground italic">
-                        {phase === "streaming" ? "Waiting for planner..." : ""}
-                      </span>
-                    )}
-                    {phase === "streaming" && !pyrrhusDone && pyrrhusOutput && (
-                      <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
-                    )}
-                  </pre>
+                  {!pyrrhusOutput && phase === "streaming" ? (
+                    <p className="text-xs text-muted-foreground italic">
+                      Waiting for planner...
+                    </p>
+                  ) : viewMode === "raw" ? (
+                    <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed">
+                      {pyrrhusOutput}
+                      {phase === "streaming" && !pyrrhusDone && pyrrhusOutput && (
+                        <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
+                      )}
+                    </pre>
+                  ) : (
+                    <div className="prose-output text-sm leading-relaxed">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {pyrrhusOutput}
+                      </ReactMarkdown>
+                      {phase === "streaming" && !pyrrhusDone && pyrrhusOutput && (
+                        <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -545,16 +600,27 @@ export default function ComparePage() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
-                  <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed">
-                    {baselineOutput || (
-                      <span className="text-muted-foreground italic">
-                        {phase === "streaming" ? "Generating..." : ""}
-                      </span>
-                    )}
-                    {phase === "streaming" && !baselineDone && baselineOutput && (
-                      <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
-                    )}
-                  </pre>
+                  {!baselineOutput && phase === "streaming" ? (
+                    <p className="text-xs text-muted-foreground italic">
+                      Generating...
+                    </p>
+                  ) : viewMode === "raw" ? (
+                    <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed">
+                      {baselineOutput}
+                      {phase === "streaming" && !baselineDone && baselineOutput && (
+                        <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
+                      )}
+                    </pre>
+                  ) : (
+                    <div className="prose-output text-sm leading-relaxed">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {baselineOutput}
+                      </ReactMarkdown>
+                      {phase === "streaming" && !baselineDone && baselineOutput && (
+                        <span className="inline-block w-1.5 h-3.5 bg-foreground animate-pulse ml-0.5" />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
