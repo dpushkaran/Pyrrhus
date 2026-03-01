@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from google import genai
-from google.genai import types
+from CAL.llm import LLM
 
+from llm_provider import extract_response, make_user_message
 from models import (
     TIER_MAX_TOKENS,
     TIER_PRICING_PER_1M_INPUT,
@@ -129,8 +129,8 @@ class ExecutorAgent:
     At the end it assembles the full CostReport (build_report).
     """
 
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, tier_llms: dict[Tier, LLM]):
+        self.tier_llms = tier_llms
 
     def execute(
         self,
@@ -198,22 +198,17 @@ class ExecutorAgent:
                 sid, alloc.tier.value, alloc.model, alloc.max_tokens,
             )
 
-            response = self.client.models.generate_content(
-                model=alloc.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=alloc.max_tokens,
-                    temperature=0.4,
-                ),
+            llm = self.tier_llms[alloc.tier]
+            llm.max_tokens = alloc.max_tokens
+            response = llm.generate_content(
+                system_prompt="",
+                conversation_history=[make_user_message(prompt)],
             )
 
-            output_text = response.text or ""
+            output_text, prompt_tokens, completion_tokens, total_tokens = (
+                extract_response(response)
+            )
             outputs[sid] = output_text
-
-            # --- Track usage -------------------------------------------------
-            prompt_tokens = response.usage_metadata.prompt_token_count or 0
-            completion_tokens = response.usage_metadata.candidates_token_count or 0
-            total_tokens = response.usage_metadata.total_token_count or 0
 
             cost = _subtask_cost(prompt_tokens, completion_tokens, alloc.tier)
             total_spent += cost

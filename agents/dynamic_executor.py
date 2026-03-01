@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from google import genai
-from google.genai import types
+from CAL.llm import LLM
 
 from agents.evaluator import EvaluatorAgent
+from llm_provider import extract_response, make_user_message
 from models import (
     TIER_MAX_TOKENS,
     TIER_MODELS,
@@ -132,8 +132,8 @@ class DynamicExecutor:
       4. Upgrade if ROI exceeds minimum and budget permits; otherwise accept.
     """
 
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, tier_llms: dict[Tier, LLM], api_key: str):
+        self.tier_llms = tier_llms
         self.evaluator = EvaluatorAgent(api_key=api_key)
 
     def execute(
@@ -197,18 +197,14 @@ class DynamicExecutor:
                     sid, tier.value, TIER_MODELS[tier], max_tokens,
                 )
 
-                response = self.client.models.generate_content(
-                    model=TIER_MODELS[tier],
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        max_output_tokens=max_tokens,
-                        temperature=0.4,
-                    ),
+                llm = self.tier_llms[tier]
+                llm.max_tokens = max_tokens
+                response = llm.generate_content(
+                    system_prompt="",
+                    conversation_history=[make_user_message(prompt)],
                 )
 
-                output_text = response.text or ""
-                p_tok = response.usage_metadata.prompt_token_count or 0
-                c_tok = response.usage_metadata.candidates_token_count or 0
+                output_text, p_tok, c_tok, _ = extract_response(response)
                 cost = _actual_cost(p_tok, c_tok, tier)
 
                 score, reason = self.evaluator.quick_score(
