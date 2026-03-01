@@ -23,6 +23,24 @@ export interface TextMetrics {
   filler_phrase_count: number;
 }
 
+export interface SubTaskAttempt {
+  tier: string;
+  quality_score: number;
+  cost_dollars: number;
+}
+
+export interface ROIDecision {
+  subtask_id: number;
+  current_tier: string;
+  current_quality: number;
+  proposed_tier: string;
+  upgrade_cost_estimate?: number;
+  expected_quality_lift?: number;
+  roi: number;
+  decision: string;
+  reason: string;
+}
+
 export interface SubtaskMetrics {
   subtask_id: number;
   name: string;
@@ -35,6 +53,8 @@ export interface SubtaskMetrics {
   surplus_returned: number;
   quality?: QualityScore;
   text_metrics?: TextMetrics;
+  attempts?: SubTaskAttempt[];
+  roi_decisions?: ROIDecision[];
 }
 
 export interface TierDistribution {
@@ -55,6 +75,12 @@ export interface DowngradeReport {
   final_plan_cost: number;
   downgrades: DowngradeEntry[];
   subtasks_skipped: string[];
+}
+
+export interface UpgradeReport {
+  total_upgrades: number;
+  evaluation_cost: number;
+  decisions: ROIDecision[];
 }
 
 export interface EfficiencyStats {
@@ -120,6 +146,7 @@ export interface CostReport {
   subtask_metrics: SubtaskMetrics[];
   tier_distribution: TierDistribution[];
   downgrade_report: DowngradeReport | null;
+  upgrade_report?: UpgradeReport;
   efficiency_stats: EfficiencyStats;
   task_graph_summary: TaskGraphSummary;
   dag: Dag;

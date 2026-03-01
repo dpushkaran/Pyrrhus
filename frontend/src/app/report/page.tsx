@@ -98,6 +98,7 @@ export default function ReportPage() {
     subtask_metrics: subtasks,
     tier_distribution: tiers,
     downgrade_report: downgrades,
+    upgrade_report: upgrades,
     efficiency_stats: efficiency,
     task_graph_summary: graphSummary,
     dag,
@@ -108,6 +109,8 @@ export default function ReportPage() {
     downgrades &&
     (downgrades.downgrades.length > 0 ||
       downgrades.subtasks_skipped.length > 0);
+
+  const hasUpgrades = upgrades && upgrades.decisions.length > 0;
 
   return (
     <main className="min-h-screen">
@@ -494,6 +497,57 @@ export default function ReportPage() {
                                   {s.description}
                                 </p>
                               </div>
+                              {s.attempts && s.attempts.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                    Tier Attempts
+                                  </p>
+                                  <div className="flex gap-2 flex-wrap">
+                                    {s.attempts.map((a, ai) => (
+                                      <div
+                                        key={ai}
+                                        className={`rounded-md px-3 py-2 text-center border ${
+                                          ai === s.attempts!.length - 1
+                                            ? "border-foreground/20 bg-muted/60"
+                                            : "border-transparent bg-muted/30"
+                                        }`}
+                                      >
+                                        <Badge
+                                          variant="outline"
+                                          className="font-mono text-[10px] uppercase mb-1"
+                                        >
+                                          {a.tier}
+                                        </Badge>
+                                        <p className="text-xs font-mono font-semibold">
+                                          {a.quality_score.toFixed(1)}/10
+                                        </p>
+                                        <p className="text-[9px] text-muted-foreground font-mono">
+                                          {microDollars(a.cost_dollars)}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {s.roi_decisions && s.roi_decisions.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
+                                    ROI Decisions
+                                  </p>
+                                  <div className="space-y-1">
+                                    {s.roi_decisions.map((d, di) => (
+                                      <p key={di} className="text-xs text-muted-foreground">
+                                        {d.current_tier} ({d.current_quality.toFixed(1)}/10) &rarr; {d.proposed_tier}
+                                        {" "}&middot; ROI {d.roi.toFixed(0)}
+                                        {" "}&middot;{" "}
+                                        <span className={d.decision === "upgrade" ? "text-foreground font-semibold" : ""}>
+                                          {d.decision}
+                                        </span>
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {s.quality && (
                                 <div>
                                   <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground mb-1">
@@ -638,66 +692,71 @@ export default function ReportPage() {
           </div>
         </section>
 
-        {/* 4. Downgrade Report */}
+        {/* 4. ROI Decision Log */}
         <section>
-          <SectionHeading>Downgrade Report</SectionHeading>
+          <SectionHeading>ROI Decision Log</SectionHeading>
           <Card>
             <CardContent className="pt-6">
-              {hasDowngrades ? (
-                <div className="space-y-3">
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-sm text-muted-foreground">
-                      Original plan cost
-                    </span>
-                    <span className="text-sm font-semibold font-mono">
-                      {dollars(downgrades!.original_plan_cost)}
-                    </span>
+              {hasUpgrades ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="flex justify-between border-b pb-2">
+                      <span className="text-sm text-muted-foreground">
+                        Total upgrades
+                      </span>
+                      <span className="text-sm font-semibold font-mono">
+                        {upgrades!.total_upgrades}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b pb-2">
+                      <span className="text-sm text-muted-foreground">
+                        Evaluation cost
+                      </span>
+                      <span className="text-sm font-semibold font-mono">
+                        {microDollars(upgrades!.evaluation_cost)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-sm text-muted-foreground">
-                      Final plan cost
-                    </span>
-                    <span className="text-sm font-semibold font-mono">
-                      {dollars(downgrades!.final_plan_cost)}
-                    </span>
-                  </div>
-                  {downgrades!.downgrades.map((d) => (
+                  {upgrades!.decisions.map((d, i) => (
                     <div
-                      key={d.subtask_id}
-                      className="flex items-center gap-2 text-sm"
+                      key={i}
+                      className="flex items-center gap-2 text-sm flex-wrap"
                     >
-                      <span>{d.name}</span>
+                      <span className="font-mono text-muted-foreground text-xs">
+                        #{d.subtask_id}
+                      </span>
                       <Badge
                         variant="outline"
                         className="font-mono text-xs uppercase"
                       >
-                        {d.original_tier}
+                        {d.current_tier}
                       </Badge>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {d.current_quality.toFixed(1)}/10
+                      </span>
                       <span className="text-muted-foreground">&rarr;</span>
                       <Badge
                         variant="outline"
                         className="font-mono text-xs uppercase"
                       >
-                        {d.final_tier}
+                        {d.proposed_tier}
                       </Badge>
-                    </div>
-                  ))}
-                  {downgrades!.subtasks_skipped.map((sk) => (
-                    <div
-                      key={sk}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <span>{sk}</span>
-                      <span className="text-muted-foreground font-mono">
-                        skipped
+                      <span className="text-xs font-mono text-muted-foreground">
+                        ROI {d.roi.toFixed(0)}
                       </span>
+                      <Badge
+                        variant={d.decision === "upgrade" ? "default" : "secondary"}
+                        className="text-xs"
+                      >
+                        {d.decision}
+                      </Badge>
                     </div>
                   ))}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  No downgrades applied &mdash; budget was sufficient for
-                  the full execution plan.
+                  No upgrade decisions &mdash; all subtasks met the quality
+                  threshold at their initial tier.
                 </p>
               )}
             </CardContent>

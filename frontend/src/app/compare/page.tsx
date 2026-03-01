@@ -59,6 +59,11 @@ export default function ComparePage() {
   // Plan info
   const [totalSubtasks, setTotalSubtasks] = useState(0);
 
+  // ROI decisions (live)
+  const [roiDecisions, setRoiDecisions] = useState<
+    { subtask_id: number; current_tier: string; current_quality: number; proposed_tier: string; roi: number; decision: string; reason: string }[]
+  >([]);
+
   // Final results
   const [pyrrhusQuality, setPyrrhusQuality] = useState<QualityScore | null>(null);
   const [baselineQuality, setBaselineQuality] = useState<QualityScore | null>(null);
@@ -88,6 +93,7 @@ export default function ComparePage() {
     setBaselineMetrics(null);
     setFinalPyrrhusCost(0);
     setFinalBaselineCost(0);
+    setRoiDecisions([]);
     setPhase("streaming");
 
     const params = new URLSearchParams({
@@ -119,6 +125,11 @@ export default function ComparePage() {
       if (!data.skipped) {
         setPyrrhusOutput((prev) => prev + "\n\n");
       }
+    });
+
+    es.addEventListener("roi_decision", (e) => {
+      const data = JSON.parse(e.data);
+      setRoiDecisions((prev) => [...prev, data]);
     });
 
     es.addEventListener("baseline_chunk", (e) => {
@@ -468,6 +479,30 @@ export default function ComparePage() {
                       }
                       className="h-1"
                     />
+                  </div>
+                )}
+                {roiDecisions.length > 0 && (
+                  <div className="px-4 py-2 border-b space-y-1 bg-muted/10">
+                    {roiDecisions.map((d, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono">
+                        <span className="text-muted-foreground">#{d.subtask_id}</span>
+                        <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
+                          {d.current_tier}
+                        </Badge>
+                        <span className="text-muted-foreground">{d.current_quality.toFixed(1)}</span>
+                        <span className="text-muted-foreground">&rarr;</span>
+                        <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
+                          {d.proposed_tier}
+                        </Badge>
+                        <span className="text-muted-foreground">ROI {d.roi.toFixed(0)}</span>
+                        <Badge
+                          variant={d.decision === "upgrade" ? "default" : "secondary"}
+                          className="text-[9px] px-1 py-0"
+                        >
+                          {d.decision}
+                        </Badge>
+                      </div>
+                    ))}
                   </div>
                 )}
                 <div className="flex-1 overflow-y-auto p-4">
