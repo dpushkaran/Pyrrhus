@@ -414,4 +414,7 @@ def api_traces():
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from compare import compare_bp
+    app.register_blueprint(compare_bp)
     app.run(debug=True, port=5001)
