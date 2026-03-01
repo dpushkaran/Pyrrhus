@@ -128,14 +128,17 @@ export default function ReportPage() {
           </div>
           <div className="flex items-center gap-4">
             <Link
+              href="/compare"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Compare
+            </Link>
+            <Link
               href="/traces"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               Traces
             </Link>
-            <span className="text-xs font-mono text-muted-foreground">
-              {new Date().toISOString().slice(0, 16).replace("T", " ")} UTC
-            </span>
           </div>
         </div>
       </div>

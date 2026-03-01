@@ -41,12 +41,20 @@ export default function Home() {
           <span className="text-xs font-semibold tracking-[.14em] uppercase text-muted-foreground">
             Pyrrhus
           </span>
-          <Link
-            href="/traces"
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Trace History
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/compare"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Compare
+            </Link>
+            <Link
+              href="/traces"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Traces
+            </Link>
+          </div>
         </div>
       </div>
 
