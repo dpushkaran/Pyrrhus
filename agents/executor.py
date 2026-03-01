@@ -74,7 +74,8 @@ def _build_context(
 
     parts.append(
         "Produce a thorough, high-quality response for YOUR SUBTASK. "
-        "Use the context above where relevant."
+        "Use the context above where relevant but DO NOT repeat or "
+        "restate content from prior subtasks — produce only NEW content."
     )
     return "\n".join(parts)
 
@@ -260,11 +261,11 @@ class ExecutorAgent:
         results: list[SubTaskResult],
         outputs: dict[int, str],
     ) -> str:
-        """The deliverable is the output of the last non-skipped subtask."""
-        for sid in reversed(order):
-            if sid in outputs and outputs[sid]:
-                return outputs[sid]
-        return "(No output produced — budget may have been insufficient.)"
+        """Concatenate all subtask outputs in execution order."""
+        parts = [outputs[sid] for sid in order if sid in outputs and outputs[sid]]
+        if not parts:
+            return "(No output produced — budget may have been insufficient.)"
+        return "\n\n".join(parts)
 
     @staticmethod
     def _build_report(
