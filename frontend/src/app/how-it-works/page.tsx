@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
@@ -10,24 +13,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { DagGraph } from "@/components/dag-graph";
+import {
+  LivePipelineGraph,
+  type SubtaskNode,
+  type CompletedInfo,
+  type RoiDecision,
+} from "@/components/live-pipeline-graph";
 
-const EXAMPLE_DAG = {
-  nodes: [
-    { id: 1, label: "Research\u2026", complexity: "Low" },
-    { id: 2, label: "Analyze\u2026", complexity: "Medium" },
-    { id: 3, label: "Draft copy\u2026", complexity: "High" },
-    { id: 4, label: "Format\u2026", complexity: "Low" },
-    { id: 5, label: "Synthesize\u2026", complexity: "High" },
-  ],
-  edges: [
-    { from: 1, to: 3 },
-    { from: 2, to: 3 },
-    { from: 1, to: 4 },
-    { from: 3, to: 5 },
-    { from: 4, to: 5 },
-  ],
-};
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5001";
 
 const STAGES = [
   {
@@ -132,6 +125,121 @@ function StageCard({
 
 export default function HowItWorksPage() {
   const [activeStage, setActiveStage] = useState("planner");
+
+  // Live graph state
+  const [vizTask, setVizTask] = useState("");
+  const [vizBudget, setVizBudget] = useState("0.08");
+  const [vizRunning, setVizRunning] = useState(false);
+  const [vizDone, setVizDone] = useState(false);
+  const [vizFinalQuality, setVizFinalQuality] = useState<number | null>(null);
+  const [subtasks, setSubtasks] = useState<SubtaskNode[]>([]);
+  const [activeSubtaskId, setActiveSubtaskId] = useState<number | null>(null);
+  const [completedSubtasks, setCompletedSubtasks] = useState<Map<number, CompletedInfo>>(new Map());
+  const [skippedIds, setSkippedIds] = useState<Set<number>>(new Set());
+  const [roiDecisions, setRoiDecisions] = useState<RoiDecision[]>([]);
+  const [vizCost, setVizCost] = useState(0);
+  const [vizEventLog, setVizEventLog] = useState<string[]>([]);
+  const esRef = useRef<EventSource | null>(null);
+
+  function startVisualization() {
+    if (!vizTask.trim()) return;
+
+    setSubtasks([]);
+    setActiveSubtaskId(null);
+    setCompletedSubtasks(new Map());
+    setSkippedIds(new Set());
+    setRoiDecisions([]);
+    setVizCost(0);
+    setVizEventLog([]);
+    setVizRunning(true);
+    setVizDone(false);
+    setVizFinalQuality(null);
+
+    const params = new URLSearchParams({
+      task: vizTask.trim(),
+      budget: vizBudget,
+      mode: "capped",
+    });
+
+    const es = new EventSource(`${API_URL}/api/compare/stream?${params}`);
+    esRef.current = es;
+
+    es.addEventListener("plan", (e) => {
+      const data = JSON.parse(e.data);
+      setSubtasks(data.subtasks || []);
+      setVizEventLog((prev) => [
+        ...prev,
+        `Planner decomposed into ${data.total_subtasks} subtasks ($${data.planner_cost?.toFixed(6) ?? "?"})`,
+      ]);
+    });
+
+    es.addEventListener("pyrrhus_chunk", (e) => {
+      const data = JSON.parse(e.data);
+      setActiveSubtaskId(data.subtask_id);
+      setVizCost(data.cost_so_far);
+    });
+
+    es.addEventListener("roi_decision", (e) => {
+      const data = JSON.parse(e.data);
+      setRoiDecisions((prev) => [...prev, data]);
+      setVizEventLog((prev) => [
+        ...prev,
+        `#${data.subtask_id} ${data.current_tier} → ${data.proposed_tier}: ROI ${data.roi.toFixed(0)} — ${data.decision}`,
+      ]);
+    });
+
+    es.addEventListener("pyrrhus_subtask_done", (e) => {
+      const data = JSON.parse(e.data);
+      setVizCost(data.cost_so_far);
+      if (data.skipped) {
+        setSkippedIds((prev) => new Set([...prev, data.subtask_id]));
+        setVizEventLog((prev) => [...prev, `#${data.subtask_id} skipped`]);
+      } else {
+        setCompletedSubtasks((prev) => {
+          const next = new Map(prev);
+          next.set(data.subtask_id, {
+            tier: data.tier,
+            quality: data.quality ?? 0,
+          });
+          return next;
+        });
+        setVizEventLog((prev) => [
+          ...prev,
+          `#${data.subtask_id} done — ${data.tier} tier, quality ${data.quality?.toFixed(1) ?? "?"}, $${data.cost?.toFixed(6) ?? "?"}`,
+        ]);
+      }
+      setActiveSubtaskId(null);
+    });
+
+    es.addEventListener("done", (e) => {
+      const data = JSON.parse(e.data);
+      setVizCost(data.pyrrhus_cost);
+      setVizFinalQuality(data.pyrrhus_quality ?? null);
+      setVizRunning(false);
+      setVizDone(true);
+      setVizEventLog((prev) => [
+        ...prev,
+        `Done — total cost $${data.pyrrhus_cost?.toFixed(6) ?? "?"}, quality ${data.pyrrhus_quality?.toFixed(1) ?? "?"}`,
+      ]);
+      es.close();
+    });
+
+    es.addEventListener("error", () => {
+      setVizRunning(false);
+      es.close();
+    });
+  }
+
+  function resetVisualization() {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setSubtasks([]);
+    setVizRunning(false);
+    setVizDone(false);
+    setVizEventLog([]);
+  }
 
   return (
     <main className="min-h-screen">
@@ -271,70 +379,138 @@ export default function HowItWorksPage() {
 
         <Separator />
 
-        {/* Example DAG */}
+        {/* Live Pipeline Visualization */}
         <section>
           <h2 className="text-[10px] font-semibold uppercase tracking-[.12em] text-muted-foreground mb-4">
-            Example Task DAG
+            Live Pipeline Visualization
           </h2>
           <p className="text-xs text-muted-foreground mb-4">
-            Task: &ldquo;Create a go-to-market plan for a student SaaS.&rdquo;
-            The planner decomposes this into 5 subtasks with dependencies. The
-            allocator assigns tiers based on complexity.
+            Enter a task to watch Pyrrhus decompose, allocate, and execute in
+            real time. Nodes light up as subtasks are processed, colored by
+            their assigned tier.
           </p>
-          <Card>
-            <CardContent className="pt-6">
-              <DagGraph dag={EXAMPLE_DAG} />
-            </CardContent>
-          </Card>
 
-          {/* Subtask detail table */}
-          <div className="mt-4 border rounded-lg overflow-hidden">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b bg-muted/30">
-                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">#</th>
-                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Subtask</th>
-                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Complexity</th>
-                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Tier</th>
-                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Dependencies</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { id: 1, task: "Research competitor landscape", cx: "Low", tier: "Fast", deps: "None" },
-                  { id: 2, task: "Analyze target demographics", cx: "Medium", tier: "Verify", deps: "None" },
-                  { id: 3, task: "Draft positioning and messaging copy", cx: "High", tier: "Deep", deps: "1, 2" },
-                  { id: 4, task: "Format pricing table", cx: "Low", tier: "Fast", deps: "1" },
-                  { id: 5, task: "Synthesize into final GTM document", cx: "High", tier: "Deep", deps: "3, 4" },
-                ].map((row) => (
-                  <tr key={row.id} className="border-b last:border-0">
-                    <td className="px-4 py-2 font-mono text-muted-foreground">{row.id}</td>
-                    <td className="px-4 py-2">{row.task}</td>
-                    <td className="px-4 py-2">
-                      <Badge variant="outline" className="text-[9px] font-mono uppercase">
-                        {row.cx}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-1.5">
-                        <div
-                          className={`w-2 h-2 rounded-full ${
-                            row.tier === "Fast"
-                              ? "bg-green-500"
-                              : row.tier === "Verify"
-                                ? "bg-yellow-500"
-                                : "bg-red-500"
-                          }`}
-                        />
-                        <span className="font-mono">{row.tier}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2 font-mono text-muted-foreground">{row.deps}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Compact input form */}
+          <div className="flex gap-3 mb-4">
+            <Textarea
+              value={vizTask}
+              onChange={(e) => setVizTask(e.target.value)}
+              placeholder="e.g. Compare 3 cloud providers and recommend one for a startup"
+              rows={1}
+              className="resize-none flex-1 text-sm"
+              disabled={vizRunning}
+            />
+            <div className="relative w-24 shrink-0">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">
+                $
+              </span>
+              <Input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={vizBudget}
+                onChange={(e) => setVizBudget(e.target.value)}
+                className="pl-6 font-mono text-sm h-full"
+                disabled={vizRunning}
+              />
+            </div>
+            {!vizRunning && !vizDone ? (
+              <Button
+                onClick={startVisualization}
+                disabled={!vizTask.trim()}
+                className="shrink-0"
+              >
+                Visualize
+              </Button>
+            ) : vizDone ? (
+              <Button
+                onClick={resetVisualization}
+                variant="outline"
+                className="shrink-0"
+              >
+                Reset
+              </Button>
+            ) : (
+              <Button disabled className="shrink-0">
+                Running...
+              </Button>
+            )}
           </div>
+
+          {/* Graph + event log side by side */}
+          {subtasks.length > 0 && (
+            <div className="grid md:grid-cols-3 gap-4">
+              {/* Graph — takes 2/3 */}
+              <Card className="md:col-span-2">
+                <CardContent className="pt-6 pb-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-[#dbeafe] border border-[#3b82f6]" />
+                        <span className="text-[9px] text-muted-foreground">Active</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-green-500" />
+                        <span className="text-[9px] text-muted-foreground">Fast</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                        <span className="text-[9px] text-muted-foreground">Verify</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                        <span className="text-[9px] text-muted-foreground">Deep</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      ${vizCost.toFixed(6)}
+                    </span>
+                  </div>
+                  <LivePipelineGraph
+                    subtasks={subtasks}
+                    activeSubtaskId={activeSubtaskId}
+                    completedSubtasks={completedSubtasks}
+                    roiDecisions={roiDecisions}
+                    skippedIds={skippedIds}
+                    finalQuality={vizFinalQuality}
+                  />
+                </CardContent>
+              </Card>
+
+              {/* Event log — takes 1/3 */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                    Event Log
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-1.5 max-h-[350px] overflow-y-auto">
+                    {vizEventLog.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">
+                        Waiting for events...
+                      </p>
+                    ) : (
+                      vizEventLog.map((entry, i) => (
+                        <div
+                          key={i}
+                          className="text-[10px] font-mono text-muted-foreground leading-snug border-l-2 border-muted pl-2"
+                        >
+                          {entry}
+                        </div>
+                      ))
+                    )}
+                    {vizRunning && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        Processing...
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </section>
 
         <Separator />
