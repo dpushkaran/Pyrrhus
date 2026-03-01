@@ -77,6 +77,10 @@ function ComparePageInner() {
 
   // Plan info
   const [totalSubtasks, setTotalSubtasks] = useState(0);
+  const [subtaskList, setSubtaskList] = useState<
+    { id: number; description: string; complexity: string; tier?: string; skipped?: boolean }[]
+  >([]);
+  const [completedSubtasks, setCompletedSubtasks] = useState<Set<number>>(new Set());
 
   // ROI decisions (live)
   const [roiDecisions, setRoiDecisions] = useState<
@@ -114,6 +118,8 @@ function ComparePageInner() {
     setFinalPyrrhusCost(0);
     setFinalBaselineCost(0);
     setRoiDecisions([]);
+    setSubtaskList([]);
+    setCompletedSubtasks(new Set());
     setPhase("streaming");
 
     const params = new URLSearchParams({
@@ -128,6 +134,19 @@ function ComparePageInner() {
     es.addEventListener("plan", (e) => {
       const data = JSON.parse(e.data);
       setTotalSubtasks(data.total_subtasks);
+      const allocMap: Record<number, { tier: string; skipped: boolean }> = {};
+      for (const a of data.allocations || []) {
+        allocMap[a.subtask_id] = { tier: a.tier, skipped: a.skipped };
+      }
+      setSubtaskList(
+        (data.subtasks || []).map((s: { id: number; description: string; complexity: string }) => ({
+          id: s.id,
+          description: s.description,
+          complexity: s.complexity,
+          tier: allocMap[s.id]?.tier,
+          skipped: allocMap[s.id]?.skipped,
+        }))
+      );
     });
 
     es.addEventListener("pyrrhus_chunk", (e) => {
@@ -142,6 +161,7 @@ function ComparePageInner() {
       const data = JSON.parse(e.data);
       setPyrrhusCost(data.cost_so_far);
       setPyrrhusProgress(data.progress);
+      setCompletedSubtasks((prev) => new Set([...prev, data.subtask_id]));
       if (!data.skipped) {
         setPyrrhusOutput((prev) => prev + "\n\n");
       }
@@ -523,6 +543,86 @@ function ComparePageInner() {
                       }
                       className="h-1"
                     />
+                  </div>
+                )}
+                {subtaskList.length > 0 && (
+                  <div className="px-4 py-2 border-b flex items-center gap-1.5 overflow-x-auto">
+                    {subtaskList.map((s, i) => {
+                      const isDone = completedSubtasks.has(s.id);
+                      const isActive = pyrrhusCurrentSubtask === s.id && !isDone;
+                      const isSkipped = s.skipped;
+
+                      const tierColor =
+                        s.tier === "fast"
+                          ? "bg-green-500"
+                          : s.tier === "deep"
+                            ? "bg-red-500"
+                            : s.tier === "verify"
+                              ? "bg-yellow-500"
+                              : "bg-muted-foreground";
+
+                      return (
+                        <div key={s.id} className="flex items-center gap-1.5">
+                          {i > 0 && (
+                            <div
+                              className={`w-4 h-px ${
+                                isDone
+                                  ? "bg-foreground/30"
+                                  : "bg-muted-foreground/20"
+                              }`}
+                            />
+                          )}
+                          <div
+                            className={`group relative flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-mono transition-all ${
+                              isActive
+                                ? "border-foreground bg-foreground/5 ring-1 ring-foreground/20"
+                                : isDone
+                                  ? "border-foreground/20 bg-muted/40"
+                                  : isSkipped
+                                    ? "border-dashed border-muted-foreground/30 text-muted-foreground/50"
+                                    : "border-muted-foreground/20 text-muted-foreground"
+                            }`}
+                          >
+                            <div
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                isActive
+                                  ? `${tierColor} animate-pulse`
+                                  : isDone
+                                    ? tierColor
+                                    : isSkipped
+                                      ? "bg-muted-foreground/30"
+                                      : "bg-muted-foreground/40"
+                              }`}
+                            />
+                            <span>{s.id}</span>
+                            {isDone && (
+                              <svg
+                                width="10"
+                                height="10"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="3"
+                                className="text-green-600 dark:text-green-400"
+                              >
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            )}
+                            {isSkipped && (
+                              <span className="text-[8px]">skip</span>
+                            )}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-10">
+                              <div className="bg-popover border rounded-md shadow-md px-2.5 py-1.5 text-[10px] max-w-[180px] whitespace-normal">
+                                <p className="font-semibold">{s.tier?.toUpperCase()}</p>
+                                <p className="text-muted-foreground mt-0.5 leading-snug">
+                                  {s.description}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {roiDecisions.length > 0 && (
