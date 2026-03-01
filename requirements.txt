@@ -7,3 +7,4 @@ flask-cors
 supabase
 matplotlib
 numpy
+datasets

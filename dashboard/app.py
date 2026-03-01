@@ -426,6 +426,103 @@ def api_traces():
     return jsonify(summaries)
 
 
+@app.route("/api/comparisons/stats")
+def comparisons_stats():
+    """Aggregate stats from the comparisons table for the analysis dashboard."""
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if not supabase_url or not supabase_key:
+        return jsonify({"error": "Supabase not configured"}), 500
+
+    from supabase import create_client as _sc
+    sb = _sc(supabase_url, supabase_key)
+    rows = sb.table("comparisons").select("*").execute().data
+    if not rows:
+        return jsonify({"total": 0})
+
+    valid = [r for r in rows if r.get("pyrrhus_quality") is not None
+             and r.get("baseline_quality") is not None]
+
+    def _avg(lst):
+        return sum(lst) / len(lst) if lst else 0
+
+    cats = sorted(set(r.get("category", "") for r in rows if r.get("category")))
+    budgets = sorted(set(r.get("budget", 0) for r in rows))
+
+    by_category = []
+    for cat in cats:
+        cr = [r for r in rows if r.get("category") == cat]
+        cv = [r for r in cr if r.get("pyrrhus_quality") is not None
+              and r.get("baseline_quality") is not None]
+        if not cv:
+            continue
+        pq = _avg([r["pyrrhus_quality"] for r in cv])
+        bq = _avg([r["baseline_quality"] for r in cv])
+        sv = _avg([r["cost_savings_pct"] for r in cr if r.get("cost_savings_pct") is not None])
+        pw = sum(1 for r in cv if r["pyrrhus_quality"] > r["baseline_quality"])
+        bw = sum(1 for r in cv if r["baseline_quality"] > r["pyrrhus_quality"])
+        ti = sum(1 for r in cv if r["pyrrhus_quality"] == r["baseline_quality"])
+        by_category.append({
+            "category": cat, "pyrrhus_quality": round(pq, 2),
+            "baseline_quality": round(bq, 2), "delta": round(pq - bq, 2),
+            "cost_savings_pct": round(sv, 1),
+            "pyrrhus_wins": pw, "baseline_wins": bw, "ties": ti,
+            "count": len(cr),
+        })
+
+    by_budget = []
+    for b in budgets:
+        br = [r for r in rows if r.get("budget") == b]
+        bv = [r for r in br if r.get("pyrrhus_quality") is not None
+              and r.get("baseline_quality") is not None]
+        if not bv:
+            continue
+        pq = _avg([r["pyrrhus_quality"] for r in bv])
+        bq = _avg([r["baseline_quality"] for r in bv])
+        sv = _avg([r["cost_savings_pct"] for r in br if r.get("cost_savings_pct") is not None])
+        by_budget.append({
+            "budget": b, "pyrrhus_quality": round(pq, 2),
+            "baseline_quality": round(bq, 2), "delta": round(pq - bq, 2),
+            "cost_savings_pct": round(sv, 1), "count": len(br),
+        })
+
+    quality_matrix = []
+    for cat in cats:
+        row = {"category": cat}
+        for b in budgets:
+            cbr = [r for r in rows if r.get("category") == cat and r.get("budget") == b
+                   and r.get("pyrrhus_quality") is not None and r.get("baseline_quality") is not None]
+            if cbr:
+                row[f"${b}"] = round(_avg([r["pyrrhus_quality"] - r["baseline_quality"] for r in cbr]), 1)
+            else:
+                row[f"${b}"] = None
+        quality_matrix.append(row)
+
+    p_wins = sum(1 for r in valid if r["pyrrhus_quality"] > r["baseline_quality"])
+    b_wins = sum(1 for r in valid if r["baseline_quality"] > r["pyrrhus_quality"])
+    ties = sum(1 for r in valid if r["pyrrhus_quality"] == r["baseline_quality"])
+
+    return jsonify({
+        "total": len(rows),
+        "overall": {
+            "pyrrhus_quality": round(_avg([r["pyrrhus_quality"] for r in valid]), 2),
+            "baseline_quality": round(_avg([r["baseline_quality"] for r in valid]), 2),
+            "delta": round(_avg([r["pyrrhus_quality"] - r["baseline_quality"] for r in valid]), 2),
+            "cost_savings_pct": round(_avg([r["cost_savings_pct"] for r in rows if r.get("cost_savings_pct") is not None]), 1),
+            "pyrrhus_wins": p_wins,
+            "baseline_wins": b_wins,
+            "ties": ties,
+            "avg_pyrrhus_cost": round(_avg([r["pyrrhus_cost"] for r in rows if r.get("pyrrhus_cost")]), 6),
+            "avg_baseline_cost": round(_avg([r["baseline_cost"] for r in rows if r.get("baseline_cost")]), 6),
+        },
+        "by_category": by_category,
+        "by_budget": by_budget,
+        "quality_matrix": quality_matrix,
+        "budgets": budgets,
+        "categories": cats,
+    })
+
+
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from compare import compare_bp

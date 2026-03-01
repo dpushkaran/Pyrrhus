@@ -79,6 +79,12 @@ export default function Home() {
           </span>
           <div className="flex items-center gap-4">
             <Link
+              href="/how-it-works"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              How It Works
+            </Link>
+            <Link
               href="/compare"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -88,7 +94,7 @@ export default function Home() {
               href="/traces"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              Traces
+              Analysis
             </Link>
           </div>
         </div>
